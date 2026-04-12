@@ -43241,7 +43241,9 @@ config(en_default());
 // src/index.ts
 var ReviewCommentSchema = external_exports.object({
   line: external_exports.number(),
+  // A linha no arquivo alterado onde o comentário vai ficar
   message: external_exports.string().min(1)
+  // O texto do comentário em si
 });
 var ReviewArraySchema = external_exports.array(ReviewCommentSchema);
 var GithubService = class {
@@ -43255,15 +43257,18 @@ var GithubService = class {
   owner;
   repo;
   pullNumber;
+  // Puxa o "Diff" (texto que mostra as linhas apagadas em vermelho e adicionadas em verde) do PR inteiro.
   async fetchDiff() {
     const { data } = await this.octokit.rest.pulls.get({
       owner: this.owner,
       repo: this.repo,
       pull_number: this.pullNumber,
+      // Passando mediaType: "diff" nós enganamos o GitHub pra retornar o diff bruto como texto, ao invés de um JSON do PR.
       mediaType: { format: "diff" }
     });
     return data;
   }
+  // Faz um comentário solto no histórico do PR (útil para Erros ou Avisos da Action)
   async postComment(body) {
     await this.octokit.rest.issues.createComment({
       owner: this.owner,
@@ -43272,6 +43277,8 @@ var GithubService = class {
       body
     });
   }
+  // Envia todos os comentários que a IA fez de uma vez, mas com paginação
+  // para evitar quebrar limites da API do GitHub.
   async postReviewBatches(reviews) {
     const CHUNK_SIZE = 50;
     const totalBatches = Math.ceil(reviews.length / CHUNK_SIZE);
@@ -43283,10 +43290,12 @@ var GithubService = class {
         repo: this.repo,
         pull_number: this.pullNumber,
         event: "COMMENT",
+        // "COMMENT" envia sem aprovar ou reprovar a PR explicitamente.
         body: `\u{1F916} **An\xE1lise do Gemini 3.1 Flash (Parte ${i + 1}/${totalBatches})**
 
 Total de pontos identificados: ${reviews.length}.`,
         comments: batch
+        // Aqui injetamos as notas inline no código
       });
       if (totalBatches > 1 && i < totalBatches - 1) {
         await new Promise((res) => setTimeout(res, 2e3));
@@ -43299,10 +43308,13 @@ var GeminiService = class {
     this.model = model;
   }
   model;
+  // Envia o prompt de forma simples usando a função interna de retry
   async analyze(prompt) {
     const result = await this.withRetry(() => this.model.generateContent(prompt));
     return result.response.text();
   }
+  // Se a API da Google cair ou recusar por limite, essa função automaticamente 
+  // tenta de novo com "Backoff Exponencial" (espera 2s, depois 4s, depois 8s...)
   async withRetry(fn, maxRetries = 3) {
     for (let i = 0; i < maxRetries; i++) {
       try {
@@ -43317,6 +43329,7 @@ var GeminiService = class {
     }
     throw new Error("Falha ap\xF3s retentativas");
   }
+  // Faz a faxina do MarkDown: Se a IA retornar "```json [...] ```", pegamos só os colchetes
   cleanJson(text) {
     let cleaned = text.trim();
     if (cleaned.startsWith("```")) {
@@ -43327,7 +43340,7 @@ var GeminiService = class {
   }
 };
 async function getGuidelines(filePath) {
-  const generic = "Siga principios de Clean Code e OWASP de Seguran\xE7a Geral.";
+  const generic = "Siga princ\xEDpios de Clean Code, SOLID e OWASP para Seguran\xE7a.";
   let type;
   if (filePath.startsWith("frontend") || filePath.includes("react") || filePath.includes("components")) type = "FRONTEND";
   else if (filePath.startsWith("backend") || filePath.includes("prisma") || filePath.includes("api") || filePath.includes("services")) type = "BACKEND";
@@ -43350,7 +43363,7 @@ async function run() {
     const repo = context3.repo.repo;
     const pullNumber = context3.payload.pull_request?.number || context3.payload.issue?.number;
     if (!pullNumber) {
-      warning("\u26A0\uFE0F Action executada fora de um contexto de Pull Request. Abortando com sucesso.");
+      warning("\u26A0\uFE0F Action executada fora de um contexto de Pull Request. Ignorando silenciosamente.");
       return;
     }
     info(`\u{1F916} Iniciando AI Code Reviewer na PR #${pullNumber} para ${owner}/${repo}`);
@@ -43359,7 +43372,7 @@ async function run() {
     const diffString = await ghService.fetchDiff();
     if (diffString.length > 2e5) {
       warning("\u26A0\uFE0F Aviso: Diff muito grande para an\xE1lise autom\xE1tica (Limite 200.000 chars).");
-      await ghService.postComment("\u26A0\uFE0F **Aviso:** Diff muito grande para an\xE1lise autom\xE1tica. A IA abortou a sess\xE3o para economia de seguran\xE7a de rede.");
+      await ghService.postComment("\u26A0\uFE0F **Aviso:** O Diff \xE9 muito gigantesco para a IA analisar sem estourar custos/mem\xF3ria. Revis\xE3o manual obrigat\xF3ria.");
       return;
     }
     const files = (0, import_parse_diff.default)(diffString);
@@ -43378,12 +43391,18 @@ async function run() {
           const validLines = getValidLines(chunk);
           if (validLines.size === 0) return;
           const diffContent = chunk.changes.map((c) => (c.type === "add" ? "+" : c.type === "del" ? "-" : " ") + c.content).join("\n");
-          const prompt = `Analise detalhadamente este diff no arquivo ${file2.to}. Siga estas regras: ${guidelines}
+          const prompt = `Analise detalhadamente este diff no arquivo ${file2.to}. 
+          
+Siga estas regras orientadoras: 
+${guidelines}
 
-Diff:
+Diff do Arquivo:
 ${diffContent}
 
-Retorne estritamente um JSON: [{"line": number, "message": string}] caso encontre sugest\xF5es relevantes de clean code, seguran\xE7a ou performance. Ou retorne "OK" em CAIXA ALTA se tudo estiver impec\xE1vel sem sugest\xF5es vitais.`;
+Instru\xE7\xF5es Formata\xE7\xE3o:
+Retorne estritamente um JSON Array deste formato: [{"line": number, "message": string}].
+- S\xF3 crie um review se encontrar problemas relevantes nas linhas alteradas, referentes \xE0 clean code, falhas de l\xF3gica ou seguran\xE7a grave.
+- Ou retorne "OK" em CAIXA ALTA puro sem Markdown se tudo estiver impec\xE1vel e sem problemas.`;
           try {
             const response = await gemini.analyze(prompt);
             if (response.trim().toUpperCase() === "OK") return;
@@ -43391,7 +43410,7 @@ Retorne estritamente um JSON: [{"line": number, "message": string}] caso encontr
             try {
               rawJson = JSON.parse(gemini.cleanJson(response));
             } catch (jsonErr) {
-              warning(`\u26A0\uFE0F Aviso: Falha ao fazer parse do JSON em ${file2.to}. A IA respondeu: ${response}`);
+              warning(`\u26A0\uFE0F Falha ao fazer parser do JSON no arquivo ${file2.to}. Resposta bruta descartada.`);
               return;
             }
             const validated = ReviewArraySchema.safeParse(rawJson);
@@ -43404,12 +43423,12 @@ Retorne estritamente um JSON: [{"line": number, "message": string}] caso encontr
             }
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
-            error(`\u274C Erro processando ${file2.to}: ${msg}`);
+            error(`\u274C Falha mapeando ${file2.to}: ${msg}`);
           }
         });
       }
     }
-    info(`\u{1F9E0} Realizando an\xE1lise em ${tasks.length} blocos com concorr\xEAncia controlada...`);
+    info(`\u{1F9E0} Processaremos um total de ${tasks.length} blocos de c\xF3digo usando paralelismo controlado...`);
     const CONCURRENCY_LIMIT = 5;
     for (let i = 0; i < tasks.length; i += CONCURRENCY_LIMIT) {
       const batch = tasks.slice(i, i + CONCURRENCY_LIMIT);
@@ -43418,11 +43437,11 @@ Retorne estritamente um JSON: [{"line": number, "message": string}] caso encontr
     if (allReviews.length > 0) {
       await ghService.postReviewBatches(allReviews);
     } else {
-      info("\u2728 Tudo limpo! Nenhuma sugest\xE3o postada.");
+      info("\u2728 Tudo limpo e inspecionado com sucesso! O c\xF3digo n\xE3o exigiu modifica\xE7\xF5es.");
     }
   } catch (error49) {
     const e = error49;
-    setFailed(`\u{1F4A5} Falha fatal do Revisor IA: ${e.message}`);
+    setFailed(`\u{1F4A5} Falha fatal do Action Revisor: ${e.message}`);
   }
 }
 run();
