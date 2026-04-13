@@ -43339,15 +43339,43 @@ var GeminiService = class {
     return match ? match[0] : cleaned;
   }
 };
+var MASTER_GUIDELINES = `
+# Diretrizes Universais de Code Review Mestre
+Voc\xEA \xE9 um Engenheiro de Software S\xEAnior especializado em Code Review Sist\xEAmico. 
+Ao analisar o diff, foque em 4 pilares Rigorosos:
+
+1. Seguran\xE7a (OWASP):
+- Rejeite inputs n\xE3o sanitizados, vulnerabilidades cl\xE1ssicas (XSS, SQLi), keys hardcoded e Mass Assignment.
+
+2. Clean Code e Anti-Patterns:
+- Critique de forma severa "Magic Numbers", fun\xE7\xF5es com m\xFAltiplas responsabilidades e "Nesting" profundo (exija Early Returns).
+- Sinalize o uso abusivo de "any[]" ou tipagem frouxa no TypeScript.
+
+3. Performance e Tr\xE1fego:
+- Identifique N+1 Queries em Bancos de Dados.
+- Critique renders pesados ou loops aninhados desnecess\xE1rios.
+
+4. Taxonomia Obrigat\xF3ria da Resposta:
+Prefixe cada coment\xE1rio seu (no campo message) com a severidade apropriada:
+- \u{1F534} BLOCKING: Para riscos de seguran\xE7a iminentes ou bugs cr\xF4nicos vis\xEDveis.
+- \u{1F7E1} SUGGESTION: Para refatora\xE7\xF5es, D\xE9bito T\xE9cnico e Clean Code.
+- \u{1F7E2} NIT: Para detalhes pontuais de nomenclatura ou linting mental.
+- \u2753 QUESTION: Para d\xFAvidas contextuais ("Esse timeout de 50s \xE9 intencional?").
+`;
 async function getGuidelines(filePath) {
-  const generic = "Siga princ\xEDpios de Clean Code, SOLID e OWASP para Seguran\xE7a.";
+  const generic = MASTER_GUIDELINES;
   let type;
   if (filePath.startsWith("frontend") || filePath.includes("react") || filePath.includes("components")) type = "FRONTEND";
   else if (filePath.startsWith("backend") || filePath.includes("prisma") || filePath.includes("api") || filePath.includes("services")) type = "BACKEND";
   if (!type) return generic;
   try {
     const rulesPath = import_path.default.join(process.cwd(), `.github/ai-rules/${type}.md`);
-    return await import_promises.default.readFile(rulesPath, "utf-8");
+    const customRules = await import_promises.default.readFile(rulesPath, "utf-8");
+    return `Regras Nativas do Reposit\xF3rio: 
+${customRules}
+
+Al\xE9m disso, aplique esta baseline absoluta:
+${MASTER_GUIDELINES}`;
   } catch {
     info(`\u2139\uFE0F Nenhuma diretriz local encontrada em .github/ai-rules/${type}.md. Utilizando regras globais defaults para ${type}.`);
     return generic;

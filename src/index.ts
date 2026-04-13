@@ -132,11 +132,38 @@ class GeminiService {
 }
 
 // ==========================================
-// 3. RECUPERAÇÃO DE CONTEXTO E REGRAS
+// 3. RECUPERAÇÃO DE CONTEXTO E REGRAS MATRIZES
 // ==========================================
+// Se o projeto-alvo não possuir um .github/ai-rules personalizado, a IA usará este 
+// "Prompt de Sistema" mestre herdado das nossas Skills de Code Review e Clean Code.
+const MASTER_GUIDELINES = `
+# Diretrizes Universais de Code Review Mestre
+Você é um Engenheiro de Software Sênior especializado em Code Review Sistêmico. 
+Ao analisar o diff, foque em 4 pilares Rigorosos:
+
+1. Segurança (OWASP):
+- Rejeite inputs não sanitizados, vulnerabilidades clássicas (XSS, SQLi), keys hardcoded e Mass Assignment.
+
+2. Clean Code e Anti-Patterns:
+- Critique de forma severa "Magic Numbers", funções com múltiplas responsabilidades e "Nesting" profundo (exija Early Returns).
+- Sinalize o uso abusivo de "any[]" ou tipagem frouxa no TypeScript.
+
+3. Performance e Tráfego:
+- Identifique N+1 Queries em Bancos de Dados.
+- Critique renders pesados ou loops aninhados desnecessários.
+
+4. Taxonomia Obrigatória da Resposta:
+Prefixe cada comentário seu (no campo message) com a severidade apropriada:
+- 🔴 BLOCKING: Para riscos de segurança iminentes ou bugs crônicos visíveis.
+- 🟡 SUGGESTION: Para refatorações, Débito Técnico e Clean Code.
+- 🟢 NIT: Para detalhes pontuais de nomenclatura ou linting mental.
+- ❓ QUESTION: Para dúvidas contextuais ("Esse timeout de 50s é intencional?").
+`;
+
 // Lê as regras de projeto se a pasta .github/ai-rules existir no repositório analisado.
+// Retorna a regra do repo ou a regra MASTER_GUIDELINES fundida.
 async function getGuidelines(filePath: string): Promise<string> {
-  const generic = "Siga princípios de Clean Code, SOLID e OWASP para Segurança.";
+  const generic = MASTER_GUIDELINES;
   let type: "FRONTEND" | "BACKEND" | undefined;
   
   // Tenta classificar o escopo baseando na pasta do arquivo modificado
@@ -148,7 +175,9 @@ async function getGuidelines(filePath: string): Promise<string> {
   try {
     // Tenta ler o arquivo localmente
     const rulesPath = path.join(process.cwd(), `.github/ai-rules/${type}.md`);
-    return await fs.readFile(rulesPath, "utf-8");
+    const customRules = await fs.readFile(rulesPath, "utf-8");
+    // FUSÂO DE REGRA MESTRE + REGRA REPOSITÓRIO:
+    return `Regras Nativas do Repositório: \n${customRules}\n\nAlém disso, aplique esta baseline absoluta:\n${MASTER_GUIDELINES}`;
   } catch {
     core.info(`ℹ️ Nenhuma diretriz local encontrada em .github/ai-rules/${type}.md. Utilizando regras globais defaults para ${type}.`);
     return generic;
