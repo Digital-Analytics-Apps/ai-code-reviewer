@@ -4,7 +4,7 @@
   "description": "AI Code Reviewer - Custom GitHub Action for intelligent code review using Gemini",
   "main": "index.js",
   "scripts": {
-    "build": "ncc build src/index.ts -o dist --source-map --license licenses.txt",
+    "build": "npx esbuild src/index.ts --bundle --platform=node --target=node20 --outfile=dist/index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
