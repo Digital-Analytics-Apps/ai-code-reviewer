@@ -297,14 +297,7 @@ async function run() {
       pullNumber,
     );
 
-    let finalBaseUrl = aiBaseUrl;
-    // Auto-roteamento para a API do Google (Gemini via camada OpenAI-Compatible)
-    if (!finalBaseUrl && aiModel.toLowerCase().includes("gemini")) {
-      finalBaseUrl = "https://generativelanguage.googleapis.com/v1beta/openai/";
-      core.info("🔄 Auto-detectado modelo Gemini. Redirecionando Base URL para a API do Google.");
-    }
-
-    const aiClient = new OpenAI({ apiKey: aiKey, baseURL: finalBaseUrl || undefined });
+    const aiClient = new OpenAI({ apiKey: aiKey, baseURL: aiBaseUrl || undefined });
     const aiService = new AIService(aiClient, aiModel);
 
     // [FASE DIFF] Puxa todas as modificações...
