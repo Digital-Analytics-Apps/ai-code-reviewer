@@ -45728,7 +45728,12 @@ async function run() {
       repo,
       pullNumber
     );
-    const aiClient = new openai_default({ apiKey: aiKey, baseURL: aiBaseUrl });
+    let finalBaseUrl = aiBaseUrl;
+    if (!finalBaseUrl && aiModel.toLowerCase().includes("gemini")) {
+      finalBaseUrl = "https://generativelanguage.googleapis.com/v1beta/openai/";
+      info("\u{1F504} Auto-detectado modelo Gemini. Redirecionando Base URL para a API do Google.");
+    }
+    const aiClient = new openai_default({ apiKey: aiKey, baseURL: finalBaseUrl || void 0 });
     const aiService = new AIService(aiClient, aiModel);
     const diffString = await ghService.fetchDiff();
     if (diffString.length > 2e5) {
