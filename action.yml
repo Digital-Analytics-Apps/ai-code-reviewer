@@ -1,14 +1,27 @@
 name: 'AI Code Reviewer'
-description: 'Agente inteligente de Code Review utilizando Gemini 3.1 com diretrizes customizáveis.'
-author: 'Alicon / Gilson'
+description: 'Agente inteligente de Code Review utilizando IA com diretrizes customizáveis.'
+author: 'Gilson'
 
 inputs:
   github_token:
     description: 'Github Token (geralmente passsado com secrets.GITHUB_TOKEN)'
     required: true
-  gemini_api_key:
-    description: 'Chave de API do Google Gemini AI'
+  ai_api_key:
+    description: 'Chave de API do provedor (OpenAI, Anthropic, Gemini, Ollama, etc)'
     required: true
+  ai_base_url:
+    description: 'URL base da API (Opcional). Útil para provedores como Ollama interno, vLLM, ou compatíveis.'
+    required: false
+  ai_model:
+    description: 'Nome do modelo a ser utilizado (ex: gpt-4o, claude-3-5-sonnet, llama3)'
+    required: false
+    default: 'gpt-4o-mini'
+  custom_rules:
+    description: 'Regras de negócio ou Code Style em texto puro injetadas diretamente do Workflow YAML.'
+    required: false
+  rules_path:
+    description: 'Caminho customizado do arquivo Markdown que contém as regras. (Ex: .github/ai-rules.md)'
+    required: false
 
 runs:
   using: 'node20'
