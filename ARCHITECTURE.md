@@ -14,31 +14,52 @@ Ao construir esta Action, nossa maior preocupação foi garantir que o código a
 
 ---
 
-## 2. O Motor Central (`src/index.ts`)
+## 2. Estrutura Modular do Código-Fonte (`src/`)
 
-A estrutura do código foi desenhada usando padrões *Wrapper* e paralelismo controlado para suportar cenários de alto estresse na rede.
+A partir da versão atual, o código foi refatorado em módulos com responsabilidades isoladas. A estrutura usa padrões *Wrapper* e paralelismo controlado para suportar cenários de alto estresse na rede.
 
-### A) Validação Estrita Mão-de-Ferro (Zod)
+```
+src/
+├── index.ts                  ← Entrypoint + Orquestrador principal (função run())
+├── schemas/
+│   └── review.schema.ts      ← Schemas Zod + interface GithubReviewComment
+├── services/
+│   ├── github.service.ts     ← GithubService: toda comunicação com a API do GitHub
+│   └── ai.service.ts         ← AIService: chamadas à IA + retry + limpeza de JSON
+├── guidelines/
+│   └── guidelines.ts         ← MASTER_GUIDELINES + função getGuidelines()
+└── utils/
+    └── diff.utils.ts         ← Utilitários: filtragem de arquivos, parsing do diff, builder do prompt
+```
+
+### A) Validação Estrita Mão-de-Ferro (Zod) — `src/schemas/review.schema.ts`
 As APIs Baseadas em LLM adoram alucinar formatações em Markdown (````json ... ````). 
 Se mandarmos um JSON quebrado para a API de "Comments" do GitHub, a Action quebra com erro HTTP `422 Unprocessable Entity`.
 Por isso, nosso fluxo força um Parser regex (função `cleanJson`) seguido por uma checagem Zod (`ReviewArraySchema`). Se a IA responder lixo, nós falhamos graciosamente ignorando a resposta ao invés de derrubar o pipeline de CI inteiro.
 
-### B) Paralelismo e Proteção de Rate Limits
+### B) Paralelismo e Proteção de Rate Limits — `src/index.ts`
 O robô pega o Git Diff (todas as pastas modificadas do PR) usando a estrutura do pacote auxiliar `parse-diff`. E aqui entra a sacada mestra de performance:
 1. Separamos as tarefas de IA "arquivo por arquivo".
 2. **Concorrência Controlada:** Não disparamos o prompt para os 50 arquivos ao mesmo tempo. Limitamos a esteira da promise para rodar de `5 em 5` blocos (`CONCURRENCY_LIMIT = 5`). Isso evita banimento por IP / Rate Limit estourado nos servidores da API de IA.
 
-### C) `AIService` (Resiliência)
+### C) `AIService` (Resiliência) — `src/services/ai.service.ts`
 Se uma API de inteligência artificial sobrecarregar, retornar Erro 503 (Serviço Indisponível) ou 429 (Too Many Requests), a Action não falha instantaneamente. A função interna `withRetry` implementa um algoritmo de **Backoff Exponencial**. A action respira por 2 segundos, tenta, respira 4 segundos, tenta de novo, protegendo a estabilidade das esteiras DevOps da organização em horários de pico.
 
-### D) `GithubService` (Paginação de Comentários e Contexto)
+### D) `GithubService` (Paginação de Comentários e Contexto) — `src/services/github.service.ts`
 O Github permite postar notas "inline" diretamente nas linhas (Right Side/Lado direito do Diff). Nós separamos a API Octokit dentro dessa classe. Se a Action tiver que fazer 150 anotações de código, ela injetará em forma de lotes paginados (`CHUNK_SIZE = 50`) respeitando o limite do GitHub para não levar timeout.
 
-### E) Injeção de Regras (Brain Core)
+### E) Injeção de Regras (Brain Core) — `src/guidelines/guidelines.ts`
 Acabamos com lógicas codadas e complexas do tipo "Se é pasta 'frontend', leia regra A". Agora a injeção é totalmente determinística:
 1. O Robô lê a **Master Guideline** (Regras irrevogáveis de OWASP / Segurança).
 2. O Robô verifica se o usuário informou um `rules_path` (ex: `.github/regras.md`) e carrega.
 3. Essas regras dinâmicas são transformadas no bloco central de sistema (*System Prompt*), enviadas para o Modelo e fundidas. O desenvolvedor no "outro lado" ganha total maestria sobre a interpretação do código.
+
+### F) Utilitários de Diff — `src/utils/diff.utils.ts`
+Funções puras auxiliares isoladas do orquestrador principal:
+- `isIgnoredFile()` — filtra lock files, dist, .env e outros padrões automatizados.
+- `getValidLines()` — retorna só as linhas adicionadas onde o GitHub permite comentar.
+- `buildDiffContent()` — formata o chunk em string legível de diff (+/-/ ).
+- `buildReviewPrompt()` — monta o prompt completo enviado à IA.
 
 ---
 
@@ -49,20 +70,22 @@ _"Nosso AI Code Reviewer não é apenas um bot chamando uma IA; é uma esteira d
 
 ## 🛠️ Como dar manutenção ou criar novas Regras Nativas na Action
 
-Todo o "Cérebro" do robô mora dentro de: `src/index.ts`.
-Este arquivo fonte Typescript foi massivamente documentado em pt-BR de forma didática.
+### 👉 Onde mexer para cada tipo de mudança
 
-### 👉 Modificando o comportamento
-
-1. Faça clone/abra este repositório localmente.
-2. Abra `src/index.ts`.
-3. Edite o que precisa (Ex: adicione nova verificação de tamanho, otimize os prompts da `MASTER_GUIDELINES`, etc).
+| O que você quer alterar | Arquivo |
+|------------------------|---------|
+| Regras padrão de revisão (OWASP, Clean Code) | `src/guidelines/guidelines.ts` |
+| Lógica de chamada à IA ou retry | `src/services/ai.service.ts` |
+| Comunicação com a API do GitHub | `src/services/github.service.ts` |
+| Formato do JSON retornado pela IA | `src/schemas/review.schema.ts` |
+| Arquivos ignorados na revisão | `src/utils/diff.utils.ts` |
+| Fluxo principal: contexto, diff, paralelismo | `src/index.ts` |
 
 ### ⚙️ Como Compilar e Publicar ("Como Miletar o Bicho")
 
 Para o ecossistema do GitHub Actions funcionar com _TypeScript_, nós não podemos simplesmente enviar o `src/` puro. Precisamos "empacotar" (buildar) todas as lógicas e as pastas do "node_modules" em um único arquivo de distribuição.
 
-Se você mexeu no `src/index.ts`, **OBRIGATORIAMENTE** rode esse script antes de dar push:
+Se você mexeu em qualquer arquivo dentro de `src/`, **OBRIGATORIAMENTE** rode esse script antes de dar push:
 
 1. Tenha o Node.js 20+ instalado.
 2. Instale as dependências:

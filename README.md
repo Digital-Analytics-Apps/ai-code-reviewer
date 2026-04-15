@@ -4,7 +4,7 @@ Bem-vindo(a) ao **AI Code Reviewer**! Este guia foi feito para você, desenvolve
 
 O robô trabalha perfeitamente nos "Pull Requests". Em vez de você gastar dezenas de minutos analisando vulnerabilidades bestas de sintaxe ou _magic strings_, a IA fará essa primeira passagem como num pente-fino, colocando anotações diretas nas linhas alteradas do Github.
 
-> **Engenheiros e Mantenedores da Ferramenta**: se você precisa dar manutenção no código-fonte em Typescript, aprender a re-compilar (**buildar**) a action ou quer explicações aprofundadas da nossa arquitetura de Zero-Telemetria, acesse o nosso descritivo técnico em [ARCHITECTURE.md](ARCHITECTURE.md).
+> **Engenheiros e Mantenedores da Ferramenta**: se você precisa dar manutenção no código-fonte em Typescript, aprender a re-compilar (**buildar**) a action ou quer explicações aprofundadas da nossa arquitetura de Zero-Telemetria e estrutura modular de pastas (`schemas/`, `services/`, `guidelines/`, `utils/`), acesse o nosso descritivo técnico em [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 

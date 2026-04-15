@@ -31642,9 +31642,6 @@ var GitHub = Octokit.plugin(restEndpointMethods, paginateRest).defaults(defaults
 // node_modules/@actions/github/lib/github.js
 var context2 = new Context();
 
-// src/index.ts
-var import_promises = __toESM(require("fs/promises"));
-
 // node_modules/@octokit/plugin-paginate-graphql/dist-bundle/index.js
 var generateMessage = (path2, cursorValue) => `The cursor at "${path2.join(
   ","
@@ -41462,7 +41459,74 @@ var openai_default = OpenAI;
 
 // src/index.ts
 var import_parse_diff = __toESM(require_parse_diff());
+
+// src/guidelines/guidelines.ts
+var import_promises = __toESM(require("fs/promises"));
 var import_path2 = __toESM(require("path"));
+var MASTER_GUIDELINES = `
+# Diretrizes Universais de Code Review Mestre
+Voc\xEA \xE9 um Engenheiro de Software S\xEAnior especializado em Code Review Sist\xEAmico. 
+Ao analisar o diff, foque em 4 pilares Rigorosos:
+
+1. Seguran\xE7a (OWASP):
+- Rejeite inputs n\xE3o sanitizados, vulnerabilidades cl\xE1ssicas (XSS, SQLi), keys hardcoded e Mass Assignment.
+
+2. Clean Code e Anti-Patterns:
+- Critique de forma severa "Magic Numbers", fun\xE7\xF5es com m\xFAltiplas responsabilidades e "Nesting" profundo (exija Early Returns).
+- Sinalize o uso abusivo de tipagem frouxa em linguagens tipadas, ou a falta de contratos/schema claros onde for aplic\xE1vel.
+
+3. Performance e Tr\xE1fego:
+- Identifique N+1 Queries em Bancos de Dados.
+- Critique renders pesados ou loops aninhados desnecess\xE1rios.
+
+4. Taxonomia Obrigat\xF3ria da Resposta:
+Prefixe cada coment\xE1rio seu (no campo message) com a severidade apropriada:
+- \u{1F534} BLOCKING: Para riscos de seguran\xE7a iminentes ou bugs cr\xF4nicos vis\xEDveis.
+- \u{1F7E1} SUGGESTION: Para refatora\xE7\xF5es, D\xE9bito T\xE9cnico e Clean Code.
+- \u{1F7E2} NIT: Para detalhes pontuais de nomenclatura ou linting mental.
+- \u2753 QUESTION: Para d\xFAvidas contextuais ("Esse timeout de 50s \xE9 intencional?").
+`;
+var DEFAULT_RULES_PATHS = [
+  ".github/ai-reviewer-rules.md",
+  "ai-reviewer-rules.md"
+];
+async function getGuidelines(customRulesInput, rulesPathInput) {
+  const additionalRules = customRulesInput ? `Custom Rules from Action Input: 
+${customRulesInput}
+
+` : "";
+  let customFileRules = "";
+  if (rulesPathInput) {
+    try {
+      const explicitPath = import_path2.default.join(process.cwd(), rulesPathInput);
+      customFileRules = await import_promises.default.readFile(explicitPath, "utf-8");
+      info(`\u2139\uFE0F Loading guidelines from specified file: ${rulesPathInput}`);
+    } catch {
+      warning(
+        `\u26A0\uFE0F Rules file not found at: ${rulesPathInput}. Please check the path.`
+      );
+    }
+  }
+  if (!customFileRules && !rulesPathInput) {
+    for (const p2 of DEFAULT_RULES_PATHS) {
+      try {
+        const fullPath = import_path2.default.join(process.cwd(), p2);
+        customFileRules = await import_promises.default.readFile(fullPath, "utf-8");
+        info(`\u2139\uFE0F Successfully loaded global guidelines from ${p2}`);
+        break;
+      } catch {
+      }
+    }
+  }
+  if (additionalRules || customFileRules) {
+    return `${additionalRules}${customFileRules ? `Repository Native Rules: 
+${customFileRules}
+
+` : ""}Furthermore, apply this absolute baseline:
+${MASTER_GUIDELINES}`;
+  }
+  return MASTER_GUIDELINES;
+}
 
 // node_modules/zod/v3/external.js
 var external_exports = {};
@@ -45505,7 +45569,7 @@ var coerce = {
 };
 var NEVER = INVALID;
 
-// src/index.ts
+// src/schemas/review.schema.ts
 var ReviewCommentSchema = external_exports.object({
   line: external_exports.number(),
   // A linha no arquivo alterado onde o comentário vai ficar
@@ -45513,6 +45577,66 @@ var ReviewCommentSchema = external_exports.object({
   // O texto do comentário em si
 });
 var ReviewArraySchema = external_exports.array(ReviewCommentSchema);
+
+// src/services/ai.service.ts
+var AIService = class {
+  constructor(openai, modelName) {
+    this.openai = openai;
+    this.modelName = modelName;
+  }
+  openai;
+  modelName;
+  /**
+   * Envia o prompt para a IA e retorna o conteúdo da resposta.
+   * Utiliza retry automático com Backoff Exponencial em caso de falhas temporárias.
+   */
+  async analyze(prompt) {
+    const result = await this.withRetry(
+      () => this.openai.chat.completions.create({
+        model: this.modelName,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.2
+      })
+    );
+    return result.choices[0]?.message?.content || "OK";
+  }
+  /**
+   * Retry com Backoff Exponencial.
+   * Se a API cair ou recusar por limite de taxa, tenta novamente
+   * automaticamente (espera 2s, depois 4s, depois 8s...).
+   */
+  async withRetry(fn, maxRetries = 3) {
+    for (let i2 = 0; i2 < maxRetries; i2++) {
+      try {
+        return await fn();
+      } catch (error2) {
+        const err = error2;
+        const isRetryable = err.status === 503 || err.status === 429 || err.message?.includes("high demand") || err.message?.includes("rate limit");
+        if (!isRetryable || i2 === maxRetries - 1) throw error2;
+        const delay = 2e3 * Math.pow(2, i2);
+        warning(
+          `\u26A0\uFE0F API Error (Attempt ${i2 + 1}). Retrying in ${delay}ms...`
+        );
+        await new Promise((res) => setTimeout(res, delay));
+      }
+    }
+    throw new Error("Failed after maximum retries");
+  }
+  /**
+   * Limpa o Markdown da resposta da IA.
+   * Se a IA retornar "```json [...] ```", extrai apenas o array JSON.
+   */
+  cleanJson(text) {
+    let cleaned = text.trim();
+    if (cleaned.startsWith("```")) {
+      cleaned = cleaned.replace(/^```json\n?/, "").replace(/```$/, "");
+    }
+    const match = cleaned.match(/\[\s*\{.*\}\s*\]/s);
+    return match ? match[0] : cleaned;
+  }
+};
+
+// src/services/github.service.ts
 var GithubService = class {
   constructor(octokit, owner, repo, pullNumber) {
     this.octokit = octokit;
@@ -45524,18 +45648,25 @@ var GithubService = class {
   owner;
   repo;
   pullNumber;
-  // Puxa o "Diff" (texto que mostra as linhas apagadas em vermelho e adicionadas em verde) do PR inteiro.
+  /**
+   * Puxa o "Diff" (texto que mostra as linhas apagadas em vermelho
+   * e adicionadas em verde) do Pull Request inteiro.
+   */
   async fetchDiff() {
     const { data } = await this.octokit.rest.pulls.get({
       owner: this.owner,
       repo: this.repo,
       pull_number: this.pullNumber,
-      // Passando mediaType: "diff" nós enganamos o GitHub pra retornar o diff bruto como texto, ao invés de um JSON do PR.
+      // Passando mediaType: "diff" o GitHub retorna o diff bruto como texto,
+      // ao invés de um JSON do PR.
       mediaType: { format: "diff" }
     });
     return data;
   }
-  // Faz um comentário solto no histórico do PR (útil para Erros ou Avisos da Action)
+  /**
+   * Faz um comentário solto no histórico do PR.
+   * Útil para Erros, Avisos ou Mensagens de Status da Action.
+   */
   async postComment(body) {
     await this.octokit.rest.issues.createComment({
       owner: this.owner,
@@ -45544,8 +45675,10 @@ var GithubService = class {
       body
     });
   }
-  // Envia todos os comentários que a IA fez de uma vez, mas com paginação
-  // para evitar quebrar limites da API do GitHub.
+  /**
+   * Envia todos os comentários que a IA gerou de uma vez,
+   * com paginação para evitar quebrar limites da API do GitHub.
+   */
   async postReviewBatches(reviews) {
     const CHUNK_SIZE2 = 50;
     const totalBatches = Math.ceil(reviews.length / CHUNK_SIZE2);
@@ -45557,7 +45690,7 @@ var GithubService = class {
         repo: this.repo,
         pull_number: this.pullNumber,
         event: "COMMENT",
-        // "COMMENT" envia sem aprovar ou reprovar a PR explicitamente.
+        // "COMMENT" envia sem aprovar ou reprovar o PR explicitamente.
         body: `\u{1F916} **AI Code Review (Part ${i2 + 1}/${totalBatches})**
 
 Total issues identified: ${reviews.length}.`,
@@ -45570,118 +45703,45 @@ Total issues identified: ${reviews.length}.`,
     }
   }
 };
-var AIService = class {
-  constructor(openai, modelName) {
-    this.openai = openai;
-    this.modelName = modelName;
-  }
-  openai;
-  modelName;
-  // Envia o prompt de forma simples usando a função interna de retry
-  async analyze(prompt) {
-    const result = await this.withRetry(
-      () => this.openai.chat.completions.create({
-        model: this.modelName,
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.2
-      })
-    );
-    return result.choices[0]?.message?.content || "OK";
-  }
-  // Se a API cair ou recusar por limite, essa função automaticamente
-  // tenta de novo com "Backoff Exponencial" (espera 2s, depois 4s, depois 8s...)
-  async withRetry(fn, maxRetries = 3) {
-    for (let i2 = 0; i2 < maxRetries; i2++) {
-      try {
-        return await fn();
-      } catch (error2) {
-        const isRetryable = error2.status === 503 || error2.status === 429 || error2.message?.includes("high demand") || error2.message?.includes("rate limit");
-        if (!isRetryable || i2 === maxRetries - 1) throw error2;
-        const delay = 2e3 * Math.pow(2, i2);
-        warning(
-          `\u26A0\uFE0F API Error (Attempt ${i2 + 1}). Retrying in ${delay}ms...`
-        );
-        await new Promise((res) => setTimeout(res, delay));
-      }
-    }
-    throw new Error("Failed after maximum retries");
-  }
-  // Faz a faxina do MarkDown: Se a IA retornar "```json [...] ```", pegamos só os colchetes
-  cleanJson(text) {
-    let cleaned = text.trim();
-    if (cleaned.startsWith("```")) {
-      cleaned = cleaned.replace(/^```json\n?/, "").replace(/```$/, "");
-    }
-    const match = cleaned.match(/\[\s*\{.*\}\s*\]/s);
-    return match ? match[0] : cleaned;
-  }
-};
-var MASTER_GUIDELINES = `
-# Diretrizes Universais de Code Review Mestre
-Voc\xEA \xE9 um Engenheiro de Software S\xEAnior especializado em Code Review Sist\xEAmico. 
-Ao analisar o diff, foque em 4 pilares Rigorosos:
 
-1. Seguran\xE7a (OWASP):
-- Rejeite inputs n\xE3o sanitizados, vulnerabilidades cl\xE1ssicas (XSS, SQLi), keys hardcoded e Mass Assignment.
-
-2. Clean Code e Anti-Patterns:
-- Critique de forma severa "Magic Numbers", fun\xE7\xF5es com m\xFAltiplas responsabilidades e "Nesting" profundo (exija Early Returns).
-- Sinalize o uso abusivo de tipagem frouxa em linguagens tipadas, ou a falta de contratos/schema claros onde for aplic\xE1vel.
-
-3. Performance e Tr\xE1fego:
-- Identifique N+1 Queries em Bancos de Dados.
-- Critique renders pesados ou loops aninhados desnecess\xE1rios.
-
-4. Taxonomia Obrigat\xF3ria da Resposta:
-Prefixe cada coment\xE1rio seu (no campo message) com a severidade apropriada:
-- \u{1F534} BLOCKING: Para riscos de seguran\xE7a iminentes ou bugs cr\xF4nicos vis\xEDveis.
-- \u{1F7E1} SUGGESTION: Para refatora\xE7\xF5es, D\xE9bito T\xE9cnico e Clean Code.
-- \u{1F7E2} NIT: Para detalhes pontuais de nomenclatura ou linting mental.
-- \u2753 QUESTION: Para d\xFAvidas contextuais ("Esse timeout de 50s \xE9 intencional?").
-`;
-async function getGuidelines(customRulesInput, rulesPathInput) {
-  const generic = MASTER_GUIDELINES;
-  const additionalRules = customRulesInput ? `Custom Rules from Action Input: 
-${customRulesInput}
-
-` : "";
-  let customFileRules = "";
-  if (rulesPathInput) {
-    try {
-      const explicitPath = import_path2.default.join(process.cwd(), rulesPathInput);
-      customFileRules = await import_promises.default.readFile(explicitPath, "utf-8");
-      info(`\u2139\uFE0F Loading guidelines from specified file: ${rulesPathInput}`);
-    } catch {
-      warning(
-        `\u26A0\uFE0F Rules file not found at: ${rulesPathInput}. Please check the path.`
-      );
-    }
-  }
-  if (!customFileRules && !rulesPathInput) {
-    const defaultPaths = [
-      ".github/ai-reviewer-rules.md",
-      "ai-reviewer-rules.md"
-    ];
-    for (const p2 of defaultPaths) {
-      try {
-        const fullPath = import_path2.default.join(process.cwd(), p2);
-        customFileRules = await import_promises.default.readFile(fullPath, "utf-8");
-        info(`\u2139\uFE0F Successfully loaded global guidelines from ${p2}`);
-        break;
-      } catch {
-      }
-    }
-  }
-  let finalRules = generic;
-  if (additionalRules || customFileRules) {
-    finalRules = `${additionalRules}${customFileRules ? `Repository Native Rules: 
-${customFileRules}
-
-` : ""}Furthermore, apply this absolute baseline:
-${MASTER_GUIDELINES}`;
-  }
-  return finalRules;
+// src/utils/diff.utils.ts
+var IGNORED_FILE_PATTERNS = [
+  "package-lock.json",
+  "yarn.lock",
+  "pnpm-lock.yaml",
+  ".env",
+  ".github",
+  "dist",
+  "build"
+];
+function isIgnoredFile(filePath) {
+  return IGNORED_FILE_PATTERNS.some((pattern) => filePath.includes(pattern));
 }
+function getValidLines(chunk) {
+  const lines = chunk.changes.filter((c2) => c2.type === "add").map((c2) => c2.ln);
+  return new Set(lines);
+}
+function buildDiffContent(chunk) {
+  return chunk.changes.map(
+    (c2) => (c2.type === "add" ? "+" : c2.type === "del" ? "-" : " ") + c2.content
+  ).join("\n");
+}
+function buildReviewPrompt(fileName, guidelines, diffContent) {
+  return `Analise detalhadamente este diff no arquivo ${fileName}. 
+          
+Siga estas regras orientadoras: 
+${guidelines}
+
+Diff do Arquivo:
+${diffContent}
+
+Instru\xE7\xF5es Formata\xE7\xE3o:
+Retorne estritamente um JSON Array deste formato: [{"line": number, "message": string}].
+- S\xF3 crie um review se encontrar problemas relevantes nas linhas alteradas, referentes \xE0 clean code, falhas de l\xF3gica ou seguran\xE7a grave.
+- Ou retorne "OK" em CAIXA ALTA puro sem Markdown se tudo estiver impec\xE1vel e sem problemas.`;
+}
+
+// src/index.ts
 async function run() {
   try {
     const githubToken = getInput("github_token", { required: true });
@@ -45692,8 +45752,7 @@ async function run() {
     const rulesPathInput = getInput("rules_path") || "";
     setSecret(aiKey);
     const context3 = context2;
-    const owner = context3.repo.owner;
-    const repo = context3.repo.repo;
+    const { owner, repo } = context3.repo;
     if (context3.eventName === "issue_comment") {
       const commentBody = context3.payload.comment?.body || "";
       if (!commentBody.trim().startsWith("/ai-review")) {
@@ -45728,7 +45787,7 @@ async function run() {
       repo,
       pullNumber
     );
-    const aiClient = new openai_default({ apiKey: aiKey, baseURL: aiBaseUrl || void 0 });
+    const aiClient = new openai_default({ apiKey: aiKey, baseURL: aiBaseUrl });
     const aiService = new AIService(aiClient, aiModel);
     const diffString = await ghService.fetchDiff();
     if (diffString.length > 2e5) {
@@ -45746,50 +45805,27 @@ async function run() {
       customRulesInput,
       rulesPathInput
     );
-    const getValidLines = (chunk) => {
-      const lines = chunk.changes.filter((c2) => c2.type === "add").map((c2) => c2.ln);
-      return new Set(lines);
-    };
     const tasks = [];
     for (const file of files) {
       if (!file.to || file.to === "/dev/null") continue;
-      if ([
-        "package-lock.json",
-        "yarn.lock",
-        "pnpm-lock.yaml",
-        ".env",
-        ".github",
-        "dist",
-        "build"
-      ].some((p2) => file.to?.includes(p2)))
-        continue;
-      const guidelines = globalGuidelines;
+      if (isIgnoredFile(file.to)) continue;
       for (const chunk of file.chunks) {
         tasks.push(async () => {
           const validLines = getValidLines(chunk);
           if (validLines.size === 0) return;
-          const diffContent = chunk.changes.map(
-            (c2) => (c2.type === "add" ? "+" : c2.type === "del" ? "-" : " ") + c2.content
-          ).join("\n");
-          const prompt = `Analise detalhadamente este diff no arquivo ${file.to}. 
-          
-Siga estas regras orientadoras: 
-${guidelines}
-
-Diff do Arquivo:
-${diffContent}
-
-Instru\xE7\xF5es Formata\xE7\xE3o:
-Retorne estritamente um JSON Array deste formato: [{"line": number, "message": string}].
-- S\xF3 crie um review se encontrar problemas relevantes nas linhas alteradas, referentes \xE0 clean code, falhas de l\xF3gica ou seguran\xE7a grave.
-- Ou retorne "OK" em CAIXA ALTA puro sem Markdown se tudo estiver impec\xE1vel e sem problemas.`;
+          const diffContent = buildDiffContent(chunk);
+          const prompt = buildReviewPrompt(
+            file.to,
+            globalGuidelines,
+            diffContent
+          );
           try {
             const response = await aiService.analyze(prompt);
             if (response.trim().toUpperCase() === "OK") return;
             let rawJson;
             try {
               rawJson = JSON.parse(aiService.cleanJson(response));
-            } catch (jsonErr) {
+            } catch {
               warning(
                 `\u26A0\uFE0F Failed to parse JSON for file ${file.to}. Raw response discarded.`
               );
