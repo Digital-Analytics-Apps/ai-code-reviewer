@@ -45603,9 +45603,10 @@ var AIService = class {
   /**
    * Retry com Backoff Exponencial.
    * Se a API cair ou recusar por limite de taxa, tenta novamente
-   * automaticamente (espera 2s, depois 4s, depois 8s...).
+   * automaticamente com espera crescente: 5s → 10s → 20s → 40s → 80s.
+   * 5 tentativas cobrem janelas de rate limit de até ~2 minutos.
    */
-  async withRetry(fn, maxRetries = 3) {
+  async withRetry(fn, maxRetries = 5) {
     for (let i2 = 0; i2 < maxRetries; i2++) {
       try {
         return await fn();
@@ -45613,9 +45614,9 @@ var AIService = class {
         const err = error2;
         const isRetryable = err.status === 503 || err.status === 429 || err.message?.includes("high demand") || err.message?.includes("rate limit");
         if (!isRetryable || i2 === maxRetries - 1) throw error2;
-        const delay = 2e3 * Math.pow(2, i2);
+        const delay = 5e3 * Math.pow(2, i2);
         warning(
-          `\u26A0\uFE0F API Error (Attempt ${i2 + 1}). Retrying in ${delay}ms...`
+          `\u26A0\uFE0F API Error (Attempt ${i2 + 1}/${maxRetries}). Retrying in ${delay}ms...`
         );
         await new Promise((res) => setTimeout(res, delay));
       }
@@ -45854,10 +45855,14 @@ async function run() {
     info(
       `\u{1F9E0} Processing a total of ${tasks.length} code blocks using controlled parallelism...`
     );
-    const CONCURRENCY_LIMIT = 5;
+    const CONCURRENCY_LIMIT = 2;
+    const BATCH_DELAY_MS = 3e3;
     for (let i2 = 0; i2 < tasks.length; i2 += CONCURRENCY_LIMIT) {
       const batch = tasks.slice(i2, i2 + CONCURRENCY_LIMIT);
       await Promise.all(batch.map((task) => task()));
+      if (i2 + CONCURRENCY_LIMIT < tasks.length) {
+        await new Promise((res) => setTimeout(res, BATCH_DELAY_MS));
+      }
     }
     if (allReviews.length > 0) {
       await ghService.postReviewBatches(allReviews);
