@@ -45707,13 +45707,27 @@ Total issues identified: ${reviews.length}.`,
 
 // src/utils/diff.utils.ts
 var IGNORED_FILE_PATTERNS = [
+  // Dependency locks
   "package-lock.json",
   "yarn.lock",
   "pnpm-lock.yaml",
+  // Environment & secrets
   ".env",
-  ".github",
+  // Build artifacts
   "dist",
-  "build"
+  "build",
+  // CI/CD configs (não precisam de revisão de lógica)
+  ".github",
+  // Database migrations (geradas automaticamente pelo Prisma)
+  "prisma/migrations",
+  "migration.sql",
+  // Documentação (Markdown, not code)
+  "docs/",
+  ".md",
+  // Agent rules/config files
+  ".agent/",
+  // Test snapshots
+  "__snapshots__"
 ];
 function isIgnoredFile(filePath) {
   return IGNORED_FILE_PATTERNS.some((pattern) => filePath.includes(pattern));
