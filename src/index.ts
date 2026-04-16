@@ -112,7 +112,7 @@ async function run(): Promise<void> {
         "⚠️ Warning: Diff is too large for automatic analysis (Limit 200,000 chars).",
       );
       await ghService.postComment(
-        "⚠️ **Warning:** The PR diff is too massive for the AI to analyze within context limits. Manual review is required.",
+"⚠️ **Warning:** The PR diff is too massive for the AI to analyze within context limits. Manual review is required.",
       );
       return;
     }
@@ -190,15 +190,23 @@ async function run(): Promise<void> {
     }
 
     // ── [6] EXECUÇÃO ASSÍNCRONA CONTROLADA ──────────────────────────────────
-    // Processa em lotes de 5 tasks simultâneas para evitar Rate Limit da IA
+    // Processa em lotes de 2 tasks simultâneas para respeitar o Rate Limit da IA.
+    // Um delay de 3s entre batches evita rajadas que causam erros 429.
     core.info(
       `🧠 Processing a total of ${tasks.length} code blocks using controlled parallelism...`,
     );
 
-    const CONCURRENCY_LIMIT = 5;
+    const CONCURRENCY_LIMIT = 2;
+    const BATCH_DELAY_MS = 3000;
+
     for (let i = 0; i < tasks.length; i += CONCURRENCY_LIMIT) {
       const batch = tasks.slice(i, i + CONCURRENCY_LIMIT);
       await Promise.all(batch.map((task) => task()));
+
+      // Aguarda entre batches para não saturar a API
+      if (i + CONCURRENCY_LIMIT < tasks.length) {
+        await new Promise((res) => setTimeout(res, BATCH_DELAY_MS));
+      }
     }
 
     // ── [7] FINALIZAÇÃO ──────────────────────────────────────────────────────

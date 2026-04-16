@@ -34,9 +34,10 @@ export class AIService {
   /**
    * Retry com Backoff Exponencial.
    * Se a API cair ou recusar por limite de taxa, tenta novamente
-   * automaticamente (espera 2s, depois 4s, depois 8s...).
+   * automaticamente com espera crescente: 5s → 10s → 20s → 40s → 80s.
+   * 5 tentativas cobrem janelas de rate limit de até ~2 minutos.
    */
-  private async withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
+  private async withRetry<T>(fn: () => Promise<T>, maxRetries = 5): Promise<T> {
     for (let i = 0; i < maxRetries; i++) {
       try {
         return await fn();
@@ -51,9 +52,10 @@ export class AIService {
 
         if (!isRetryable || i === maxRetries - 1) throw error;
 
-        const delay = 2000 * Math.pow(2, i);
+        // Backoff exponencial com base 5s: 5s, 10s, 20s, 40s...
+        const delay = 5000 * Math.pow(2, i);
         core.warning(
-          `⚠️ API Error (Attempt ${i + 1}). Retrying in ${delay}ms...`,
+          `⚠️ API Error (Attempt ${i + 1}/${maxRetries}). Retrying in ${delay}ms...`,
         );
         await new Promise((res) => setTimeout(res, delay));
       }
