@@ -6,17 +6,32 @@ import parseDiff from "parse-diff";
 
 /**
  * Padrões de arquivos que devem ser ignorados durante a revisão.
- * Inclui lock files, artefatos de build, arquivos de ambiente e
- * configurações geradas automaticamente.
+ * Inclui lock files, artefatos de build, arquivos de ambiente,
+ * configurações geradas automaticamente, migrations SQL,
+ * documentação e arquivos de configuração de agentes.
  */
 export const IGNORED_FILE_PATTERNS = [
+  // Dependency locks
   "package-lock.json",
   "yarn.lock",
   "pnpm-lock.yaml",
+  // Environment & secrets
   ".env",
-  ".github",
+  // Build artifacts
   "dist",
   "build",
+  // CI/CD configs (não precisam de revisão de lógica)
+  ".github",
+  // Database migrations (geradas automaticamente pelo Prisma)
+  "prisma/migrations",
+  "migration.sql",
+  // Documentação (Markdown, not code)
+  "docs/",
+  ".md",
+  // Agent rules/config files
+  ".agent/",
+  // Test snapshots
+  "__snapshots__",
 ];
 
 /**
