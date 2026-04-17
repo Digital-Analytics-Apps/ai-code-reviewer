@@ -1,4 +1,4 @@
-import * as core from "@actions/core";
+import { logger } from "../utils/logger";
 import OpenAI from "openai";
 
 // ==========================================
@@ -54,7 +54,7 @@ export class AIService {
 
         // Backoff exponencial com base 5s: 5s, 10s, 20s, 40s...
         const delay = 5000 * Math.pow(2, i);
-        core.warning(
+        logger.warn(
           `⚠️ API Error (Attempt ${i + 1}/${maxRetries}). Retrying in ${delay}ms...`,
         );
         await new Promise((res) => setTimeout(res, delay));

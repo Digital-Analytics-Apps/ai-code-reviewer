@@ -1,4 +1,4 @@
-import * as core from "@actions/core";
+import { logger } from "../utils/logger";
 import { Octokit } from "octokit";
 import { GithubReviewComment } from "../schemas/review.schema.js";
 
@@ -57,7 +57,7 @@ export class GithubService {
 
     for (let i = 0; i < totalBatches; i++) {
       const batch = reviews.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
-      core.info(`📦 Sending batch ${i + 1}/${totalBatches}...`);
+      logger.info(`📦 Sending batch ${i + 1}/${totalBatches}...`);
 
       await this.octokit.rest.pulls.createReview({
         owner: this.owner,

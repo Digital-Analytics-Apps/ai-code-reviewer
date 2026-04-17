@@ -1,4 +1,4 @@
-import * as core from "@actions/core";
+import { logger } from "../utils/logger";
 import fs from "fs/promises";
 import path from "path";
 
@@ -69,9 +69,9 @@ export async function getGuidelines(
     try {
       const explicitPath = path.join(process.cwd(), rulesPathInput);
       customFileRules = await fs.readFile(explicitPath, "utf-8");
-      core.info(`ℹ️ Loading guidelines from specified file: ${rulesPathInput}`);
+      logger.info(`ℹ️ Loading guidelines from specified file: ${rulesPathInput}`);
     } catch {
-      core.warning(
+      logger.warn(
         `⚠️ Rules file not found at: ${rulesPathInput}. Please check the path.`,
       );
     }
@@ -83,7 +83,7 @@ export async function getGuidelines(
       try {
         const fullPath = path.join(process.cwd(), p);
         customFileRules = await fs.readFile(fullPath, "utf-8");
-        core.info(`ℹ️ Successfully loaded global guidelines from ${p}`);
+        logger.info(`ℹ️ Successfully loaded global guidelines from ${p}`);
         break; // Achou, sai do loop
       } catch {
         // Ignora e tenta o próximo caminho
