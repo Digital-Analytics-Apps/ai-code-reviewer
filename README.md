@@ -26,8 +26,25 @@ O projeto foi desenhado como uma **Action Reutilizável**. Isso significa que el
 
 ---
 
-## ⚙️ Configuração (Workflow YAML)
-
+## ⚙️ Configuração
+ 
+### Inputs Disponíveis
+ 
+| Parâmetro | Descrição | Obrigatório |
+| :--- | :--- | :--- |
+| `github_token` | Token do GitHub (use `${{ secrets.GITHUB_TOKEN }}`) | Sim |
+| `ai_api_key` | Chave de API da sua IA (OpenAI, Gemini, etc) | Sim |
+| `ai_model` | Nome do modelo (ex: `gpt-4o`, `gemini-1.5-pro`) | Sim |
+| `ai_base_url` | URL base da API (ex: para usar Gemini via OpenAI endpoint) | Não |
+| `custom_rules` | Regras de negócio específicas do seu projeto (Texto/YAML) | Não |
+| `enable_jira` | Ativa a integração com JIRA (`true` ou `false`) | Não |
+| `jira_host` | Domínio do JIRA (ex: `empresa.atlassian.net`) | Não |
+| `jira_email` | E-mail do usuário do JIRA para criação de tickets | Não |
+| `jira_token` | API Token do JIRA | Não |
+| `jira_project` | Chave do projeto no JIRA (ex: `PROJ`) | Não |
+ 
+### Exemplo de Workflow YAML
+ 
 Adicione este arquivo em `.github/workflows/ai-reviewer.yml` no seu projeto:
 
 ```yaml
@@ -45,6 +62,8 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           ai_api_key: ${{ secrets.AI_API_KEY }}
           ai_model: "gpt-4o"
+          # Opcional: Para usar Gemini (Google) via interface OpenAI
+          ai_base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
           # Opcional: Integração JIRA
           enable_jira: "true"
           jira_host: "seu-dominio.atlassian.net"
