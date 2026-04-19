@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Octokit } from "octokit";
+import { execSync } from "child_process";
 import { GithubReviewComment } from "../schemas/review.schema";
 import { logger } from "../utils/logger";
 
@@ -61,22 +62,47 @@ export class GithubService {
   }
 
   /**
-   * Busca por um termo (símbolo) em todo o repositório (Global Impact Discovery).
+   * Realiza a busca por um termo (símbolo) no repositório.
+   *
+   * ESTRATÉGIA: Local Code Search (Grep)
+   * Substituímos a API de Busca do GitHub (octokit.rest.search.code) por busca local.
+   * MOTIVAÇÃO:
+   * 1. Evitar Rate Limits da API de Busca (30 req/min).
+   * 2. Evitar erros de depreciação da API de Busca do GitHub (Sun, 27 Sep 2026).
+   * 3. Performance: Busca em disco local é muito mais rápida.
+   * REQUISITO: O repositório deve ter sido clonado via `actions/checkout`.
    */
   public async searchCode(
     query: string,
   ): Promise<{ path: string; line: number }[]> {
     try {
-      const { data } = await this.octokit.rest.search.code({
-        q: `${query} repo:${this.owner}/${this.repo}`,
-      });
+      // Comando grep recursivo, ignorando arquivos binários e diretórios comuns de build/dependências
+      // -r: recursivo | -I: ignorar binários | -l: apenas nomes de arquivos
+      const excludeDirs = "{.git,node_modules,dist,bin,build,coverage}";
+      const command = `grep -rIl "${query}" . --exclude-dir=${excludeDirs}`;
 
-      return data.items.map((item: any) => ({
-        path: item.path,
-        line: 1,
-      }));
+      try {
+        const output = execSync(command, { encoding: "utf-8" });
+        return output
+          .trim()
+          .split("\n")
+          .filter((p) => p && p !== "")
+          .map((p) => ({
+            // Normaliza o caminho removendo o prefixo './' se existir
+            path: p.startsWith("./") ? p.substring(2) : p,
+            line: 1,
+          }));
+      } catch (grepError: any) {
+        // O grep retorna exit code 1 quando não encontra nenhuma ocorrência.
+        // Tratamos isso como "zero resultados", não como um erro fatal.
+        if (grepError.status === 1) return [];
+        throw grepError;
+      }
     } catch (error) {
-      logger.warn(`⚠️ Falha na busca global por '${query}':`, error);
+      logger.warn(
+        `⚠️ Busca local falhou para '${query}'. Verifique se o código foi clonado no runner.`,
+        error,
+      );
       return [];
     }
   }

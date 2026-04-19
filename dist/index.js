@@ -9460,6 +9460,9 @@ var OAuthApp2 = OAuthApp.defaults({ Octokit: Octokit2 });
 // src/index.ts
 var fs = __toESM(require("fs"));
 
+// src/services/github.service.ts
+var import_child_process = require("child_process");
+
 // src/utils/logger.ts
 var logger = {
   info: (message, ...args) => {
@@ -9547,19 +9550,36 @@ Total de achados: ${reviews.length}.`,
     }
   }
   /**
-   * Busca por um termo (símbolo) em todo o repositório (Global Impact Discovery).
+   * Realiza a busca por um termo (símbolo) no repositório.
+   *
+   * ESTRATÉGIA: Local Code Search (Grep)
+   * Substituímos a API de Busca do GitHub (octokit.rest.search.code) por busca local.
+   * MOTIVAÇÃO:
+   * 1. Evitar Rate Limits da API de Busca (30 req/min).
+   * 2. Evitar erros de depreciação da API de Busca do GitHub (Sun, 27 Sep 2026).
+   * 3. Performance: Busca em disco local é muito mais rápida.
+   * REQUISITO: O repositório deve ter sido clonado via `actions/checkout`.
    */
   async searchCode(query) {
     try {
-      const { data } = await this.octokit.rest.search.code({
-        q: `${query} repo:${this.owner}/${this.repo}`
-      });
-      return data.items.map((item) => ({
-        path: item.path,
-        line: 1
-      }));
+      const excludeDirs = "{.git,node_modules,dist,bin,build,coverage}";
+      const command = `grep -rIl "${query}" . --exclude-dir=${excludeDirs}`;
+      try {
+        const output = (0, import_child_process.execSync)(command, { encoding: "utf-8" });
+        return output.trim().split("\n").filter((p) => p && p !== "").map((p) => ({
+          // Normaliza o caminho removendo o prefixo './' se existir
+          path: p.startsWith("./") ? p.substring(2) : p,
+          line: 1
+        }));
+      } catch (grepError) {
+        if (grepError.status === 1) return [];
+        throw grepError;
+      }
     } catch (error40) {
-      logger.warn(`\u26A0\uFE0F Falha na busca global por '${query}':`, error40);
+      logger.warn(
+        `\u26A0\uFE0F Busca local falhou para '${query}'. Verifique se o c\xF3digo foi clonado no runner.`,
+        error40
+      );
       return [];
     }
   }
