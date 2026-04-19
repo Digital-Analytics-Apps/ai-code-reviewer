@@ -57962,8 +57962,9 @@ var AIService = class {
    */
   async analyze(systemPrompt, userContent) {
     logger.info(`\u{1F916} Calling AI Model via LangChain...`);
+    const escapedSystemPrompt = systemPrompt.replace(/{/g, "{{").replace(/}/g, "}}");
     const prompt = ChatPromptTemplate.fromMessages([
-      ["system", systemPrompt],
+      ["system", escapedSystemPrompt],
       ["user", "{content}"]
     ]);
     const chain = prompt.pipe(this.model).pipe(new StringOutputParser());

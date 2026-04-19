@@ -32,8 +32,14 @@ export class AIService {
   async analyze(systemPrompt: string, userContent: string): Promise<string> {
     logger.info(`🤖 Calling AI Model via LangChain...`);
 
+    // Escapamos chaves no systemPrompt para evitar que o LangChain tente interpretá-las como variáveis
+    // No LangChain, {{ e }} são interpretados como literais { e }
+    const escapedSystemPrompt = systemPrompt
+      .replace(/{/g, "{{")
+      .replace(/}/g, "}}");
+
     const prompt = ChatPromptTemplate.fromMessages([
-      ["system", systemPrompt],
+      ["system", escapedSystemPrompt],
       ["user", "{content}"],
     ]);
 
