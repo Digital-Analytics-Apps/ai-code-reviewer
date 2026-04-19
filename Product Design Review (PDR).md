@@ -235,10 +235,20 @@ Híbrida:
 
 ## 14. 🧱 Roadmap de Implementação
 
-### Fase 1
+### Fase 3 [CONCLUÍDA]
+* Integração JIRA (Enterprise Ticketing)
+* Feature Flags para Opt-in
+* Prompts de Sumarização para Tickets
 
-* Introduzir Orchestrator
-* Criar 2 agentes (Security + General)
+### Fase 4 [CONCLUÍDA]
+* Global Impact Discovery (Busca de dependências)
+* Symbol Search Engine
+* Cross-File Context Injection
+
+### Fase 5 [EM DEFINIÇÃO]
+* **Executive Summary**: Comentário consolidado no topo do PR.
+* **Merge Verdict**: Veredito automatizado (LGTM vs Needs Changes).
+* **Risk Scoring**: Pontuação de risco baseada em severidade.
 
 ### Fase 2
 
@@ -483,7 +493,27 @@ A ordem de execução reflete uma hierarquia clara de prioridades técnicas:
 3. **Estilo (Finalizador)**: Foco em consistência visual e padrões de nomenclatura.
 
 ### 20.4 Algoritmo de Agrupamento por Linha
-O Aggregator possui inteligência para agrupar achados concorrentes na mesma linha. Ele é responsável pela deduplicação e pela aplicação da regra de severidade (`Security > Performance > Architecture > Style`), garantindo que a notificação mais crítica sempre prevaleça.
+O Aggregator possui inteligência para agrupar achados concorrentes na mesma linha. Ele é responsável pela deduplicação e pela aplicação da regra de severidade (`Security > Performance > Architecture > Style`), garantindo que a notificação mais crítica sempre prevaleça:
+- [x] **Transição para LangChain**: Motor de IA padronizado.
+- [x] **AI-Native Triage**: Agente Gestor decide os especialistas dinamicamente.
+- [x] **Diretrizes Atômicas**: Prompts externos e especializados por agente.
+- [x] **Desacoplamento de Infra**: Sistema agnóstico ao ambiente (Node 24 compatível).
+- [x] **Integração JIRA (Opt-in)**: Criação automática de tickets para falhas críticas.
+- [x] **Fase 4: Global Impact Discovery**: Detecção de quebras de contrato fora do PR.
+- [ ] **Fase 5: Executive Summary & Verdict**: Veredito final consolidado.
 
 ### 20.5 Padronização e Extensibilidade
 A estrutura interna dos agentes é padronizada (`Build -> Call -> Parse -> Validate`). Isso assegura que o sistema seja agnóstico à implementação e facilmente extensível para novas linguagens ou frameworks (Rust, Terraform, Go) através de injeção de novas classes de agentes sem alteração no Core.
+
+---
+
+## 🔬 21. Fase 4: Global Impact Discovery (Evolução MCP)
+
+O maior desafio de um Code Review é o "Ponto Cego" das dependências cruzadas. Para resolver isso, implementaremos um motor de busca ativa:
+
+1. **Symbol Harvesting**: O `ManagerAgent` extrai assinaturas de funções e classes modificadas.
+2. **Active Search (Tooling)**: O sistema utiliza a API de Search do GitHub (ou MCP Tools) para localizar todos os pontos de consumo desses símbolos no repositório.
+3. **Cross-Reference Review**: O Agente Especialista recebe o código alterado + snippets dos arquivos consumidores para validar se a mudança quebra o contrato global.
+
+> [!TIP]
+> Essa funcionalidade transforma o bot de um "revisor de estilo" em um "analista de integridade de sistema".

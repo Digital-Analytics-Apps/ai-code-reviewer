@@ -1,55 +1,47 @@
-import * as core from "@actions/core";
-import * as github from "@actions/github";
 import { Octokit } from "octokit";
-import OpenAI from "openai";
-import parseDiff from "parse-diff";
-
-import { AIService } from "./services/ai.service.js";
-import { GithubService } from "./services/github.service.js";
-import { AgentOrchestrator } from "./services/agent.orchestrator.js";
-import {
-  buildDiffContent,
-  getValidLines,
-  isIgnoredFile,
-} from "./utils/diff.utils.js";
-import { GithubReviewComment } from "./schemas/review.schema.js";
+import { GithubService } from "./services/github.service";
+import { AIService } from "./services/ai.service";
+import { AgentOrchestrator } from "./services/agent.orchestrator";
+import { JiraService } from "./services/jira.service";
+import { SummaryAgent } from "./agents/summary.agent";
+import { parseDiff } from "./utils/diff.utils";
+import { logger } from "./utils/logger";
+import { GithubReviewComment } from "./schemas/review.schema";
 
 /**
- * Função principal da Action. Coordena todos os serviços e utilitários
- * para executar o fluxo de revisão modular baseado em agentes.
- *
- * Fase 1: Introdução do AgentOrchestrator + Security/General Agents.
+ * Função principal que orquestra as Fases 1 a 5.
  */
-async function run(): Promise<void> {
+async function run() {
   try {
-    // ── [1] INPUTS ──────────────────────────────────────────────────────────
-    const githubToken = core.getInput("github_token", { required: true });
-    const aiKey = core.getInput("ai_api_key", { required: true });
-    const aiBaseUrl = core.getInput("ai_base_url") || undefined;
-    const aiModel = core.getInput("ai_model") || "gpt-4o-mini";
+    logger.info("🚀 AI Code Reviewer: Council of Agents - Starting...");
 
-    core.setSecret(aiKey);
+    // ── [1] AMBIENTE E CREDENCIAIS ───────────────────────────────────────────
+    const githubToken = process.env.GITHUB_TOKEN || "";
+    const [owner, repo] = (process.env.GITHUB_REPOSITORY || "").split("/");
+    const pullNumber = parseInt(
+      process.env.GITHUB_EVENT_PULL_NUMBER || "0",
+      10,
+    );
 
-    // ── [2] CONTEXTO DO EVENTO ───────────────────────────────────────────────
-    const context = github.context;
-    const { owner, repo } = context.repo;
+    const aiKey = process.env.AI_API_KEY || "";
+    const aiBaseUrl = process.env.AI_BASE_URL || "https://api.openai.com/v1";
+    const aiModel = process.env.AI_MODEL || "gpt-4o-mini";
+    const customRules = process.env.CUSTOM_RULES || "";
 
-    if (context.eventName === "issue_comment") {
-      const commentBody = context.payload.comment?.body || "";
-      if (!commentBody.trim().startsWith("/ai-review")) return;
-      if (!context.payload.issue?.pull_request) {
-        core.warning("⚠️ '/ai-review' called outside of a PR. Ignoring.");
-        return;
-      }
+    // ── [2] INPUTS JIRA (ENTERPRISE) ────────────────────────────────────────
+    const enableJira = process.env.ENABLE_JIRA === "true";
+    const jiraConfig = {
+      host: process.env.JIRA_HOST || "",
+      email: process.env.JIRA_EMAIL || "",
+      token: process.env.JIRA_TOKEN || "",
+      projectKey: process.env.JIRA_PROJECT || "",
+    };
+
+    if (!githubToken || !aiKey || !pullNumber) {
+      throw new Error(
+        "❌ Faltam variáveis de ambiente obrigatórias (GITHUB_TOKEN, AI_API_KEY, PULL_NUMBER).",
+      );
     }
-
-    const pullNumber = context.payload.pull_request?.number || context.payload.issue?.number;
-    if (!pullNumber) {
-      core.warning("⚠️ Action executed outside of a PR context. Ignoring.");
-      return;
-    }
-
-    core.info(`🤖 Starting CONSELHO DE AGENTES (Phase 1) on PR #${pullNumber}`);
 
     // ── [3] INICIALIZAÇÃO DOS SERVIÇOS ───────────────────────────────────────
     const ghService = new GithubService(
@@ -58,79 +50,77 @@ async function run(): Promise<void> {
       repo,
       pullNumber,
     );
-
-    const aiClient = new OpenAI({ apiKey: aiKey, baseURL: aiBaseUrl });
-    const aiService = new AIService(aiClient, aiModel);
-    const orchestrator = new AgentOrchestrator(aiService);
+    const aiService = new AIService(aiKey, aiBaseUrl, aiModel);
+    const orchestrator = new AgentOrchestrator(
+      aiService,
+      ghService,
+      customRules,
+    );
+    const jiraService = enableJira ? new JiraService(jiraConfig) : null;
+    const summaryAgent = new SummaryAgent(aiService);
 
     // ── [4] BUSCA DO DIFF ────────────────────────────────────────────────────
     const diffString = await ghService.fetchDiff();
-
-    if (diffString.length > 200000) {
-      core.warning("⚠️ Diff too large (>200k chars). Manual review required.");
-      await ghService.postComment("⚠️ **Warning:** The PR diff is too massive for automatic AI analysis.");
-      return;
-    }
-
     const files = parseDiff(diffString);
-    const allReviews: GithubReviewComment[] = [];
+    const allFindings: GithubReviewComment[] = [];
 
-    // ── [5] MONTAGEM DAS TAREFAS DE IA (MODULAR) ─────────────────────────────
-    const tasks: (() => Promise<void>)[] = [];
+    // ── [5] REVISÃO ARQUIVO POR ARQUIVO (PARALELISMO CONTROLADO) ─────────────
+    logger.info(`📝 Analisando ${files.length} arquivos...`);
 
     for (const file of files) {
-      if (!file.to || file.to === "/dev/null") continue;
-      if (isIgnoredFile(file.to)) continue;
+      if (!file.to || file.chunks.length === 0) continue;
 
-      for (const chunk of file.chunks) {
-        tasks.push(async () => {
-          const validLines = getValidLines(chunk);
-          if (validLines.size === 0) return;
+      const validLines = new Set<number>();
+      let diffContent = "";
 
-          const diffContent = buildDiffContent(chunk);
-          
-          try {
-            // Delega para o Orquestrador, que decide quais agentes chamar
-            const chunkReviews = await orchestrator.reviewChunk(
-              file.to!,
-              file.to!,
-              diffContent,
-              validLines
-            );
-
-            allReviews.push(...chunkReviews);
-          } catch (e: unknown) {
-            const msg = e instanceof Error ? e.message : String(e);
-            core.error(`❌ Failed reviewing ${file.to}: ${msg}`);
-          }
+      file.chunks.forEach((chunk) => {
+        chunk.changes.forEach((change) => {
+          if (change.type === "add") validLines.add(change.ln);
+          diffContent += `${change.type === "add" ? "+" : change.type === "del" ? "-" : " "}${change.content}\n`;
         });
+      });
+
+      const fileName = file.to;
+      const findings = await orchestrator.reviewChunk(
+        file.to,
+        fileName,
+        diffContent,
+        validLines,
+      );
+      allFindings.push(...findings);
+
+      // ── [6] INTEGRAÇÃO JIRA (OPCIONAL) ─────────────────────────────────────
+      if (jiraService) {
+        const blockingIssues = findings.filter((f) =>
+          f.body.includes("🔴 BLOCKING"),
+        );
+        for (const issue of blockingIssues) {
+          const ticketKey = await jiraService.createIssue(
+            `[AI-REVIEW] ${fileName}`,
+            issue.body,
+          );
+          if (ticketKey) {
+            issue.body += `\n\n🎫 **JIRA Ticket Criado:** [${ticketKey}](https://${jiraConfig.host}/browse/${ticketKey})`;
+          }
+        }
       }
     }
 
-    // ── [6] EXECUÇÃO ASSÍNCRONA CONTROLADA ──────────────────────────────────
-    core.info(`🧠 Processing ${tasks.length} logic blocks using Specialized Agents...`);
+    // ── [7] POSTAGEM DOS COMENTÁRIOS INLINE ──────────────────────────────────
+    await ghService.submitReview(allFindings);
 
-    const CONCURRENCY_LIMIT = 2;
-    const BATCH_DELAY_MS = 3000;
+    // ── [8] FASE 5: RESUMO EXECUTIVO E VEREDITO ──────────────────────────────
+    logger.info("📊 Gerando Resumo Executivo e Veredito...");
+    const summary = await summaryAgent.summarize(allFindings);
+    await ghService.createIssueComment(summary);
 
-    for (let i = 0; i < tasks.length; i += CONCURRENCY_LIMIT) {
-      const batch = tasks.slice(i, i + CONCURRENCY_LIMIT);
-      await Promise.all(batch.map((task) => task()));
-
-      if (i + CONCURRENCY_LIMIT < tasks.length) {
-        await new Promise((res) => setTimeout(res, BATCH_DELAY_MS));
-      }
-    }
-
-    // ── [7] FINALIZAÇÃO ──────────────────────────────────────────────────────
-    if (allReviews.length > 0) {
-      await ghService.postReviewBatches(allReviews);
-    } else {
-      core.info("✨ No issues found by the Council of Agents.");
-    }
+    logger.info("✅ Code Review finalizado com sucesso!");
   } catch (error) {
-    const e = error as Error;
-    core.setFailed(`💥 Fatal failure: ${e.message}`);
+    logger.error(
+      "💥 Erro Fatal na execução:",
+      error instanceof Error ? error.message : String(error),
+    );
+    process.exit(1);
   }
 }
 

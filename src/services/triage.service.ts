@@ -1,68 +1,65 @@
-import path from "path";
+import { AIService } from "./ai.service";
+import { MANAGER_SYSTEM_PROMPT } from "../guidelines/prompts/manager.prompt";
+import { logger } from "../utils/logger";
 
-/**
- * Categorias de agentes disponíveis no sistema.
- */
 export enum AgentCategory {
   SECURITY = "security",
+  GENERAL = "general",
   PERFORMANCE = "performance",
   ARCHITECTURE = "architecture",
-  STYLE = "style",
-  GENERAL = "general",
 }
 
 export interface TriageResult {
   language: string;
-  framework?: string;
   suggestedAgents: AgentCategory[];
+  impactfulSymbols: string[];
+  reasoning: string;
 }
 
 /**
- * Serviço responsável por analisar metadados de arquivos e decidir
- * quais agentes devem ser acionados para a revisão.
+ * Serviço de Triage (AI-Native Manager Agent).
+ * Decide quais especialistas devem atuar com base no conteúdo do arquivo.
  */
 export class TriageService {
-  /**
-   * Realiza a triage heurística (Camada 1) com base na extensão e path.
-   */
-  public triageFile(filePath: string): TriageResult {
-    const ext = path.extname(filePath).toLowerCase();
-    const fileName = path.basename(filePath).toLowerCase();
+  constructor(private aiService: AIService) {}
 
-    // Baseline: Todo arquivo de código passa por Segurança e Arquitetura/Geral
-    const result: TriageResult = {
-      language: "unknown",
-      suggestedAgents: [AgentCategory.SECURITY, AgentCategory.GENERAL],
-    };
+  public async triageFile(
+    filePath: string,
+    diffContent: string,
+  ): Promise<TriageResult> {
+    const userContent = `Arquivo: ${filePath}\n\nDiff:\n${diffContent}`;
 
-    // Mapeamento Heurístico
-    if ([".ts", ".tsx", ".js", ".jsx"].includes(ext)) {
-      result.language = "typescript/javascript";
-      result.suggestedAgents.push(AgentCategory.PERFORMANCE, AgentCategory.STYLE);
-      
-      if (filePath.includes("frontend") || fileName.includes("component")) {
-        result.framework = "react/web";
-      }
-    } else if ([".py"].includes(ext)) {
-      result.language = "python";
-      result.suggestedAgents.push(AgentCategory.PERFORMANCE, AgentCategory.STYLE);
-    } else if ([".go"].includes(ext)) {
-      result.language = "go";
-      result.suggestedAgents.push(AgentCategory.PERFORMANCE, AgentCategory.STYLE);
-    } else if ([".sql"].includes(ext)) {
-      result.language = "sql";
-      result.suggestedAgents = [AgentCategory.SECURITY, AgentCategory.PERFORMANCE];
-    } else if ([".yml", ".yaml", ".json"].includes(ext)) {
-      result.language = "config";
-      result.suggestedAgents = [AgentCategory.SECURITY]; // Check for hardcoded keys/secrets
-    } else if ([".md"].includes(ext)) {
-      result.language = "markdown";
-      result.suggestedAgents = [AgentCategory.STYLE]; // Just style/typos
+    try {
+      const response = await this.aiService.analyze(
+        MANAGER_SYSTEM_PROMPT,
+        userContent,
+      );
+      const cleaned = this.aiService.cleanJson(response);
+      const json = JSON.parse(cleaned);
+
+      const result: TriageResult = {
+        language: json.language || "unknown",
+        suggestedAgents: (json.agents || []).map(
+          (a: string) => a.toLowerCase() as AgentCategory,
+        ),
+        impactfulSymbols: json.impactfulSymbols || [],
+        reasoning: json.reasoning || "Triage realizado via IA.",
+      };
+
+      logger.info(
+        `🔍 AI Triage result for ${filePath}: [${result.language}] - Agents: ${result.suggestedAgents.join(",")} - Symbols: ${result.impactfulSymbols.join(",")}`,
+      );
+      return result;
+    } catch (error) {
+      logger.warn(
+        `⚠️ AI Triage failed for ${filePath}, falling back to default. Error: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return {
+        language: "unknown",
+        suggestedAgents: [AgentCategory.SECURITY, AgentCategory.GENERAL],
+        impactfulSymbols: [],
+        reasoning: "Fallback para todos os agentes devido a erro na triage.",
+      };
     }
-
-    // Remove duplicatas por segurança
-    result.suggestedAgents = [...new Set(result.suggestedAgents)];
-
-    return result;
   }
 }

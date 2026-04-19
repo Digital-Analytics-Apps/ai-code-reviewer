@@ -13,9 +13,25 @@ inputs:
     description: 'URL base da API (Opcional). Útil para provedores como Ollama interno, vLLM, ou compatíveis.'
     required: false
   ai_model:
-    description: 'Nome do modelo a ser utilizado (ex: gpt-4o, claude-3-5-sonnet, llama3)'
+    description: "The AI model to use (default: gpt-4o-mini)"
     required: false
-    default: 'gpt-4o-mini'
+    default: "gpt-4o-mini"
+  enable_jira:
+    description: "Enable JIRA ticket creation for blocking issues (true/false)"
+    required: false
+    default: "false"
+  jira_host:
+    description: "JIRA host (e.g., your-domain.atlassian.net)"
+    required: false
+  jira_email:
+    description: "Email for JIRA authentication"
+    required: false
+  jira_token:
+    description: "API Token for JIRA authentication"
+    required: false
+  jira_project:
+    description: "JIRA Project Key"
+    required: false
   custom_rules:
     description: 'Regras de negócio ou Code Style em texto puro injetadas diretamente do Workflow YAML.'
     required: false

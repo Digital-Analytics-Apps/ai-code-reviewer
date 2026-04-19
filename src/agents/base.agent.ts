@@ -10,7 +10,6 @@ export interface AgentFinding {
 
 /**
  * Classe Abstrata Base para todos os Agentes Especializados.
- * Define o ciclo de vida e utilitários comuns para prompts e chamadas de IA.
  */
 export abstract class BaseAgent {
   constructor(protected aiService: AIService) {}
@@ -21,44 +20,40 @@ export abstract class BaseAgent {
   abstract getName(): string;
 
   /**
-   * Retorna as diretrizes específicas deste agente.
+   * Retorna as diretrizes específicas deste agente (System Prompt).
    */
   abstract getGuidelines(): string;
 
   /**
-   * Constrói o prompt final para o agente.
+   * Executa a análise do agente sobre um diff.
+   * @param fileName Nome do arquivo
+   * @param diffContent Conteúdo do diff
+   * @param customRules Regras de negócio adicionais enviadas pelo usuário
    */
-  protected buildPrompt(fileName: string, diffContent: string): string {
-    return `Você é o ${this.getName()}, um Engenheiro de Software Sênior especializado.
-Analise detalhadamente este diff no arquivo ${fileName}.
-
-Siga estas diretrizes de especialidade:
+  public async analyze(
+    fileName: string,
+    diffContent: string,
+    customRules: string = "",
+  ): Promise<AgentFinding[]> {
+    const systemPrompt = `
 ${this.getGuidelines()}
 
-Diff do Arquivo:
-${diffContent}
+# Custom Business Rules (Priority):
+${customRules || "Nenhuma regra customizada fornecida."}
 
-Instruções de Formatação:
-Retorne estritamente um JSON Array deste formato: [{"line": number, "message": string}].
-- Só crie um review se encontrar problemas relevantes nas linhas alteradas, referentes à sua especialidade.
-- Ou retorne "OK" em CAIXA ALTA puro sem Markdown se não houver problemas detectados.`;
-  }
+# Instruções de Saída:
+- Analise apenas o código fornecido no diff.
+- Retorne estritamente um JSON Array neste formato: [{"line": number, "message": string}].
+- Se não houver problemas, retorne um array vazio [].
+    `.trim();
 
-  /**
-   * Executa a análise do agente sobre um diff.
-   */
-  public async analyze(fileName: string, diffContent: string): Promise<AgentFinding[]> {
-    const prompt = this.buildPrompt(fileName, diffContent);
-    const response = await this.aiService.analyze(prompt);
-
-    if (response.trim().toUpperCase() === "OK") {
-      return [];
-    }
+    const userContent = `Arquivo: ${fileName}\nDiff:\n${diffContent}`;
 
     try {
+      const response = await this.aiService.analyze(systemPrompt, userContent);
       const cleaned = this.aiService.cleanJson(response);
-      const rawJson = JSON.parse(cleaned);
 
+      const rawJson = JSON.parse(cleaned);
       if (Array.isArray(rawJson)) {
         return rawJson as AgentFinding[];
       }

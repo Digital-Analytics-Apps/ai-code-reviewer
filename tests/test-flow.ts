@@ -1,55 +1,61 @@
 import { AgentOrchestrator } from "../src/services/agent.orchestrator";
 import { AIService } from "../src/services/ai.service";
 
-/**
- * Mock Simples do AIService para não gastar tokens durante o teste de fluxo.
- */
 class MockAIService extends AIService {
   constructor() {
-    super(null as any, "mock-model");
+    super("mock-key", "mock-url", "mock-model");
   }
 
-  async analyze(prompt: string): Promise<string> {
-    console.log(`   [AI CALL] Prompt (resumo): ${prompt.substring(0, 80)}...`);
+  async analyze(systemPrompt: string, userContent: string): Promise<string> {
+    console.log(`   [AI CALL] System Prompt: ${systemPrompt.substring(0, 50).replace(/\n/g, ' ')}...`);
     
-    // Simula uma resposta baseada no nome do agente no prompt
-    if (prompt.includes("Security Officer")) {
-      return JSON.stringify([{ line: 10, message: "Possível vazamento de chave detectado (MOCK)." }]);
+    // Verifica se a regra customizada chegou no prompt
+    if (systemPrompt.includes("PROIBIDO_PRINT")) {
+      return JSON.stringify([{ line: 2, message: "Regra Customizada Violada: O uso de 'print' é proibido neste repo. (MOCK)" }]);
     }
-    return "OK";
+
+    if (systemPrompt.includes("Dispatcher")) {
+      return JSON.stringify({
+        language: "python",
+        agents: ["security", "general"],
+        reasoning: "Lógica detectada via Mock AI"
+      });
+    }
+
+    if (systemPrompt.includes("Security Officer")) {
+      return JSON.stringify([{ line: 1, message: "Possível vazamento de chave detectado (MOCK)." }]);
+    }
+
+    return "[]";
   }
 
   cleanJson(text: string): string {
-    return text;
+    return text.trim();
   }
 }
 
 async function runFlowTest() {
-  console.log("🚀 Iniciando Teste de Fluxo: AgentOrchestrator (Fase 1)\n");
+  console.log("🚀 Teste de Fluxo: AgentOrchestrator + Custom Rules\n");
 
+  const customRules = "REGRAS: PROIBIDO_PRINT";
   const mockAI = new MockAIService();
-  const orchestrator = new AgentOrchestrator(mockAI);
+  const orchestrator = new AgentOrchestrator(mockAI, customRules);
 
-  const file = "src/secret.py";
-  const diff = `+ apiKey = "123456"
-+ print("Hello World")`;
+  const file = "src/main.py";
+  const diff = `+ apiKey = "123456"\n+ print("Hello World")`;
   const validLines = new Set([1, 2]);
 
   console.log(`📝 Simulando revisão do arquivo: ${file}`);
   console.log("--------------------------------------------------");
 
-  const reviews = await orchestrator.reviewChunk(file, "secret.py", diff, validLines);
+  const reviews = await orchestrator.reviewChunk(file, "main.py", diff, validLines);
 
-  console.log("\n📊 Resultado Final do Orquestrador:");
-  if (reviews.length === 0) {
-    console.log("   ✨ Nenhum problema encontrado (ou agentes retornaram OK).");
-  } else {
-    reviews.forEach(r => {
-      console.log(`   📍 Linha ${r.line}: ${r.body}`);
-    });
-  }
+  console.log("\n📊 Resultado Final:");
+  reviews.forEach(r => {
+    console.log(`   📍 Linha ${r.line}: ${r.body}`);
+  });
 
-  console.log("\n✅ Teste de fluxo finalizado.");
+  console.log("\n✅ Teste finalizado.");
 }
 
 runFlowTest().catch(console.error);
