@@ -16,7 +16,7 @@ export class AIService {
 
   constructor(apiKey: string, baseUrl: string, modelName: string) {
     this.model = new ChatOpenAI({
-      openAIApiKey: apiKey,
+      apiKey: apiKey,
       configuration: {
         baseURL: baseUrl,
       },

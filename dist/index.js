@@ -57948,7 +57948,7 @@ var AIService = class {
   model;
   constructor(apiKey, baseUrl, modelName) {
     this.model = new ChatOpenAI({
-      openAIApiKey: apiKey,
+      apiKey,
       configuration: {
         baseURL: baseUrl
       },
