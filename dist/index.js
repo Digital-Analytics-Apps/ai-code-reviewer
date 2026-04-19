@@ -9457,6 +9457,9 @@ function onSecondaryRateLimit(retryAfter, options, octokit) {
 var App2 = App.defaults({ Octokit: Octokit2 });
 var OAuthApp2 = OAuthApp.defaults({ Octokit: Octokit2 });
 
+// src/index.ts
+var fs = __toESM(require("fs"));
+
 // src/utils/logger.ts
 var logger = {
   info: (message, ...args) => {
@@ -58172,8 +58175,13 @@ var AgentOrchestrator = class {
   customRules;
   triageService;
   agents = /* @__PURE__ */ new Map();
-  async reviewChunk(filePath, fileName, diffContent, validLines) {
+  /**
+   * Realiza a revisão de um arquivo completo.
+   */
+  async reviewFile(filePath, diffContent, validLines) {
+    const fileName = filePath.split("/").pop() || filePath;
     const triage = await this.triageService.triageFile(filePath, diffContent);
+    const validLinesSet = new Set(validLines);
     let globalContext = "";
     if (triage.impactfulSymbols.length > 0) {
       globalContext = await this.discoverGlobalContext(
@@ -58182,7 +58190,7 @@ var AgentOrchestrator = class {
       );
     }
     const rawFindings = [];
-    const activeAgents = this.agents.entries();
+    const activeAgents = Array.from(this.agents.entries());
     for (const [category, agent] of activeAgents) {
       if (triage.suggestedAgents.includes(category) || category === "general" /* GENERAL */ && triage.suggestedAgents.some(
         (a) => ["performance", "architecture"].includes(a)
@@ -58195,7 +58203,7 @@ ${globalContext || "Sem impactos externos detectados."}`;
         rawFindings.push({ agent: agent.getName(), findings: res });
       }
     }
-    return this.consolidateFindings(rawFindings, filePath, validLines);
+    return this.consolidateFindings(rawFindings, filePath, validLinesSet);
   }
   /**
    * Busca por usos dos símbolos alterados no restante do repositório.
@@ -58368,32 +58376,69 @@ ${findingsText}`;
 // src/utils/diff.utils.ts
 var import_parse_diff = __toESM(require_parse_diff());
 var parseDiff = import_parse_diff.default;
+var IGNORED_FILE_PATTERNS = [
+  "package-lock.json",
+  "yarn.lock",
+  "pnpm-lock.yaml",
+  ".env",
+  "dist",
+  "build",
+  ".github",
+  "prisma/migrations",
+  "migration.sql",
+  "docs/",
+  ".md",
+  ".agent/",
+  "__snapshots__"
+];
+function isIgnoredFile(filePath) {
+  return IGNORED_FILE_PATTERNS.some((pattern) => filePath.includes(pattern));
+}
 
 // src/index.ts
+function getVar(name, defaultValue = "") {
+  const envName = name.toUpperCase();
+  const inputName = `INPUT_${envName}`;
+  return process.env[envName] || process.env[inputName] || defaultValue;
+}
 async function run() {
   try {
     logger.info("\u{1F680} AI Code Reviewer: Council of Agents - Starting...");
-    const githubToken = process.env.GITHUB_TOKEN || "";
-    const [owner, repo] = (process.env.GITHUB_REPOSITORY || "").split("/");
-    const pullNumber = parseInt(
-      process.env.GITHUB_EVENT_PULL_NUMBER || "0",
-      10
-    );
-    const aiKey = process.env.AI_API_KEY || "";
-    const aiBaseUrl = process.env.AI_BASE_URL || "https://api.openai.com/v1";
-    const aiModel = process.env.AI_MODEL || "gpt-4o-mini";
-    const customRules = process.env.CUSTOM_RULES || "";
-    const enableJira = process.env.ENABLE_JIRA === "true";
+    const githubToken = getVar("GITHUB_TOKEN");
+    const aiKey = getVar("AI_API_KEY");
+    const aiModel = getVar("AI_MODEL", "gpt-4o-mini");
+    const aiBaseUrl = getVar("AI_BASE_URL", "https://api.openai.com/v1");
+    const customRules = getVar("CUSTOM_RULES");
+    const [owner, repo] = (getVar("GITHUB_REPOSITORY") || "").split("/");
+    let pullNumber = parseInt(getVar("PULL_NUMBER", "0"), 10);
+    if (!pullNumber && process.env.GITHUB_EVENT_PATH) {
+      try {
+        const event = JSON.parse(
+          fs.readFileSync(process.env.GITHUB_EVENT_PATH, "utf8")
+        );
+        pullNumber = event.pull_request?.number || 0;
+      } catch {
+        logger.warn(
+          "\u26A0\uFE0F N\xE3o foi poss\xEDvel ler o n\xFAmero do PR do GITHUB_EVENT_PATH"
+        );
+      }
+    }
+    const enableJira = getVar("ENABLE_JIRA") === "true";
     const jiraConfig = {
-      host: process.env.JIRA_HOST || "",
-      email: process.env.JIRA_EMAIL || "",
-      token: process.env.JIRA_TOKEN || "",
-      projectKey: process.env.JIRA_PROJECT || ""
+      host: getVar("JIRA_HOST"),
+      email: getVar("JIRA_EMAIL"),
+      token: getVar("JIRA_TOKEN"),
+      projectKey: getVar("JIRA_PROJECT")
     };
     if (!githubToken || !aiKey || !pullNumber) {
-      throw new Error(
-        "\u274C Faltam vari\xE1veis de ambiente obrigat\xF3rias (GITHUB_TOKEN, AI_API_KEY, PULL_NUMBER)."
-      );
+      logger.error("\u274C Falha na valida\xE7\xE3o de vari\xE1veis obrigat\xF3rias:");
+      if (!githubToken) logger.error("- GITHUB_TOKEN est\xE1 vazio.");
+      if (!aiKey) logger.error("- AI_API_KEY est\xE1 vazio.");
+      if (!pullNumber)
+        logger.error(
+          "- PULL_NUMBER n\xE3o foi detectado (garanta que o evento seja um Pull Request)."
+        );
+      throw new Error("Faltam vari\xE1veis obrigat\xF3rias.");
     }
     const ghService = new GithubService(
       new Octokit2({ auth: githubToken }),
@@ -58424,41 +58469,49 @@ async function run() {
 `;
         });
       });
-      const fileName = file2.to;
-      const findings = await orchestrator.reviewChunk(
+      if (isIgnoredFile(file2.to)) {
+        logger.info(`\u23ED\uFE0F Ignorando arquivo: ${file2.to}`);
+        continue;
+      }
+      logger.info(`\u{1F50D} Analisando: ${file2.to}`);
+      const findings = await orchestrator.reviewFile(
         file2.to,
-        fileName,
         diffContent,
-        validLines
+        Array.from(validLines)
       );
-      allFindings.push(...findings);
-      if (jiraService) {
-        const blockingIssues = findings.filter(
-          (f) => f.body.includes("\u{1F534} BLOCKING")
-        );
-        for (const issue2 of blockingIssues) {
-          const ticketKey = await jiraService.createIssue(
-            `[AI-REVIEW] ${fileName}`,
-            issue2.body
-          );
-          if (ticketKey) {
-            issue2.body += `
-
-\u{1F3AB} **JIRA Ticket Criado:** [${ticketKey}](https://${jiraConfig.host}/browse/${ticketKey})`;
-          }
-        }
+      if (findings.length > 0) {
+        logger.info(`\u2705 ${findings.length} achados em ${file2.to}`);
+        allFindings.push(...findings);
       }
     }
-    await ghService.submitReview(allFindings);
-    logger.info("\u{1F4CA} Gerando Resumo Executivo e Veredito...");
-    const summary = await summaryAgent.summarize(allFindings);
-    await ghService.createIssueComment(summary);
-    logger.info("\u2705 Code Review finalizado com sucesso!");
+    if (allFindings.length > 0) {
+      logger.info("\u{1F4CA} Gerando Resumo Executivo e Veredito Final...");
+      const summary = await summaryAgent.summarize(allFindings);
+      await ghService.createIssueComment(summary);
+      await ghService.submitReview(allFindings);
+      if (jiraService) {
+        const blockingIssues = allFindings.filter(
+          (f) => f.body.includes("BLOCKING")
+        );
+        for (const issue2 of blockingIssues) {
+          logger.info(
+            `\u{1F3AB} Criando ticket JIRA para achado cr\xEDtico em ${issue2.path}...`
+          );
+          await jiraService.createIssue(
+            `AI Review Finding: ${issue2.path} (Line ${issue2.line})`,
+            issue2.body
+          );
+        }
+      }
+    } else {
+      logger.info("\u2728 Nenhum problema encontrado. O c\xF3digo est\xE1 excelente!");
+      await ghService.createIssueComment(
+        "\u2705 **AI Code Review:** O conselho de agentes analisou seu c\xF3digo e n\xE3o encontrou problemas. Bom trabalho!"
+      );
+    }
+    logger.info("\u{1F3C1} AI Code Review finalizado com sucesso.");
   } catch (error40) {
-    logger.error(
-      "\u{1F4A5} Erro Fatal na execu\xE7\xE3o:",
-      error40 instanceof Error ? error40.message : String(error40)
-    );
+    logger.error("\u{1F4A5} Erro Fatal na execu\xE7\xE3o:", error40.message || error40);
     process.exit(1);
   }
 }

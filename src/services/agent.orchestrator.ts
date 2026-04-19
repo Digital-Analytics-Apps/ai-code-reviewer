@@ -23,13 +23,17 @@ export class AgentOrchestrator {
     this.agents.set(AgentCategory.GENERAL, new GeneralAgent(aiService));
   }
 
-  public async reviewChunk(
+  /**
+   * Realiza a revisão de um arquivo completo.
+   */
+  public async reviewFile(
     filePath: string,
-    fileName: string,
     diffContent: string,
-    validLines: Set<number>,
+    validLines: number[],
   ): Promise<GithubReviewComment[]> {
+    const fileName = filePath.split("/").pop() || filePath;
     const triage = await this.triageService.triageFile(filePath, diffContent);
+    const validLinesSet = new Set(validLines);
 
     // --- DESCOBERTA DE IMPACTO GLOBAL (FASE 4) ---
     let globalContext = "";
@@ -43,7 +47,7 @@ export class AgentOrchestrator {
     const rawFindings: { agent: string; findings: AgentFinding[] }[] = [];
 
     // 1. Coleta achados (agora com contexto global injetado)
-    const activeAgents = this.agents.entries();
+    const activeAgents = Array.from(this.agents.entries());
     for (const [category, agent] of activeAgents) {
       // Apenas roda se sugerido pela triage
       if (
@@ -61,7 +65,7 @@ export class AgentOrchestrator {
     }
 
     // 2. Deduplicação e Consolidação
-    return this.consolidateFindings(rawFindings, filePath, validLines);
+    return this.consolidateFindings(rawFindings, filePath, validLinesSet);
   }
 
   /**
