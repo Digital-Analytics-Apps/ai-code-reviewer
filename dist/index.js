@@ -77362,7 +77362,6 @@ ${snippet}
 ${s}
 `;
         });
-        body += "\n\n> [!TIP]\n> \u26A0\uFE0F *Esta \xE9 uma sugest\xE3o gerada por IA. Por favor, valide e teste a solu\xE7\xE3o antes de aplic\xE1-la.*";
       }
       finalReviews.push({
         path: path3,

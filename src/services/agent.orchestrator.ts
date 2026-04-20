@@ -143,8 +143,6 @@ export class AgentOrchestrator {
         suggestions.forEach((s) => {
           body += `\n${s}\n`;
         });
-        body +=
-          "\n\n> [!TIP]\n> ⚠️ *Esta é uma sugestão gerada por IA. Por favor, valide e teste a solução antes de aplicá-la.*";
       }
 
       finalReviews.push({
