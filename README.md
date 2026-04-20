@@ -8,6 +8,7 @@ Ao contrário de abordagens monolíticas, aqui seu código é analisado por um "
 
 - **Conselho de Agentes**: Especialistas em Segurança, Arquitetura e Clean Code agindo simultaneamente.
 - **AI-Native Triage**: Um Agente Gestor (Manager) detecta automaticamente a linguagem e o framework do arquivo, decidindo quais especialistas devem atuar.
+- **Local Hybrid Intelligence**: Busca de símbolos via `grep` local e leitura de arquivos via filesystem, eliminando Rate Limits e acelerando a análise.
 - **Powered by LangChain**: Arquitetura robusta para orquestração de prompts e suporte a múltiplos modelos (OpenAI, Gemini, etc).
 - **Integração JIRA (Enterprise)**: Criação automática de tickets para falhas críticas (BLOCKING).
 - **Regras Customizadas**: Injeção dinâmica de diretrizes específicas do seu projeto via YAML.
@@ -42,6 +43,8 @@ O projeto foi desenhado como uma **Action Reutilizável**. Isso significa que el
 | `jira_email` | E-mail do usuário do JIRA para criação de tickets | Não |
 | `jira_token` | API Token do JIRA | Não |
 | `jira_project` | Chave do projeto no JIRA (ex: `PROJ`) | Não |
+| `custom_rules` | Regras de negócio em texto puro injetadas via YAML | Não |
+| `rules_path` | Caminho para um arquivo `.md` com regras no repositório | Não |
  
 ### Exemplo de Workflow YAML
  
@@ -74,7 +77,22 @@ jobs:
           custom_rules: |
             - Prefira Early Return em vez de IFs aninhados.
             - O uso de 'console.log' é proibido em produção.
+          # Opcional: Caminho para arquivo de regras centralizado
+          rules_path: ".github/ai-rules.md"
 ```
+
+---
+
+## 🔍 Local Hybrid Intelligence (v2.0+)
+
+O bot agora utiliza uma estratégia de busca híbrida para máxima performance:
+
+1. **Grep-based Search**: Busca de símbolos alterados localmente no Runner (Linux `grep`).
+2. **Context-Aware Snippets**: Captura de contextos de uso (10 linhas antes/depois) de símbolos críticos em outros arquivos do projeto.
+3. **Node.js 24 Runtime**: Processamento paralelo de arquivos e execução otimizada no motor V8 mais recente.
+
+> [!IMPORTANT]
+> **Requisito:** É obrigatório usar `actions/checkout` antes desta Action para que a busca local funcione.
 
 ---
 

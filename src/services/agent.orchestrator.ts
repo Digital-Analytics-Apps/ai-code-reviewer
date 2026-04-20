@@ -87,8 +87,14 @@ export class AgentOrchestrator {
 
       for (const usage of externalUsages) {
         const content = await this.githubService.getFileContent(usage.path);
-        const snippet = content.split("\n").slice(0, 20).join("\n"); // Pega as primeiras 20 linhas como contexto
-        context += `\n--- [USO EXTERNO EM: ${usage.path}] ---\n${snippet}\n`;
+        const allLines = content.split("\n");
+
+        // Pega um snippet ao redor da linha encontrada (10 antes, 10 depois)
+        const start = Math.max(0, usage.line - 10);
+        const end = Math.min(allLines.length, usage.line + 10);
+        const snippet = allLines.slice(start, end).join("\n");
+
+        context += `\n--- [USO EXTERNO EM: ${usage.path} (Linha ${usage.line})] ---\n${snippet}\n`;
       }
     }
 

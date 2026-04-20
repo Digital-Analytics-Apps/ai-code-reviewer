@@ -1,46 +1,35 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import * as core from "@actions/core";
+
 /**
  * Utilitário de log que abstrai o @actions/core.
- * Permite que o código rode tanto no GitHub Actions quanto em testes locais.
+ * Permite que o código rode de forma integrada com a interface do GitHub Actions.
  */
 export const logger = {
-  info: (message: string, ...args: any[]) => {
-    const formatted = args.length
-      ? `${message} ${JSON.stringify(args)}`
-      : message;
-    try {
-      const _core = Buffer.from("QGFjdGlvbnMvY29yZQ==", "base64").toString();
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const core = require(_core);
-      core.info(formatted);
-    } catch {
-      console.log(`[INFO] ${formatted}`);
+  info: (message: string) => {
+    core.info(message);
+  },
+  warn: (message: string, error?: any) => {
+    core.warning(message);
+    if (error) core.debug(`Error detail: ${JSON.stringify(error)}`);
+  },
+  error: (message: string, error?: any) => {
+    core.error(message);
+    if (error) {
+      if (error instanceof Error) {
+        core.debug(error.stack || error.message);
+      } else {
+        core.debug(JSON.stringify(error));
+      }
     }
   },
-  warn: (message: string, ...args: any[]) => {
-    const formatted = args.length
-      ? `${message} ${JSON.stringify(args)}`
-      : message;
-    try {
-      const _core = Buffer.from("QGFjdGlvbnMvY29yZQ==", "base64").toString();
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const core = require(_core);
-      core.warning(formatted);
-    } catch {
-      console.warn(`[WARN] ${formatted}`);
-    }
+  debug: (message: string) => {
+    core.debug(message);
   },
-  error: (message: string, ...args: any[]) => {
-    const formatted = args.length
-      ? `${message} ${JSON.stringify(args)}`
-      : message;
-    try {
-      const _core = Buffer.from("QGFjdGlvbnMvY29yZQ==", "base64").toString();
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const core = require(_core);
-      core.error(formatted);
-    } catch {
-      console.error(`[ERROR] ${formatted}`);
-    }
+  startGroup: (name: string) => {
+    core.startGroup(name);
+  },
+  endGroup: () => {
+    core.endGroup();
   },
 };

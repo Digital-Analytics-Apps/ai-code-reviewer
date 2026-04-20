@@ -33,6 +33,20 @@ async function run() {
     const aiModel = getVar("AI_MODEL", "gpt-4o-mini");
     const aiBaseUrl = getVar("AI_BASE_URL", "https://api.openai.com/v1");
     const customRules = getVar("CUSTOM_RULES");
+    const rulesPath = getVar("RULES_PATH");
+
+    let effectiveRules = customRules;
+    if (rulesPath) {
+      if (fs.existsSync(rulesPath)) {
+        logger.info(`📖 Lendo regras customizadas de: ${rulesPath}`);
+        const fileRules = fs.readFileSync(rulesPath, "utf-8");
+        effectiveRules = effectiveRules
+          ? `${effectiveRules}\n\n${fileRules}`
+          : fileRules;
+      } else {
+        logger.warn(`⚠️ Arquivo de regras não encontrado: ${rulesPath}`);
+      }
+    }
 
     // Identificação do Repositório
     const [owner, repo] = (getVar("GITHUB_REPOSITORY") || "").split("/");
@@ -82,11 +96,14 @@ async function run() {
       repo,
       pullNumber,
     );
+
+    // Limpa comentários e revisões anteriores do bot para evitar poluição no PR
+    await ghService.cleanPreviousReviews();
     const aiService = new AIService(aiKey, aiBaseUrl, aiModel);
     const orchestrator = new AgentOrchestrator(
       aiService,
       ghService,
-      customRules,
+      effectiveRules,
     );
     const jiraService = enableJira ? new JiraService(jiraConfig) : null;
     const summaryAgent = new SummaryAgent(aiService);
@@ -96,39 +113,57 @@ async function run() {
     const files = parseDiff(diffString);
     const allFindings: GithubReviewComment[] = [];
 
-    // ── [5] REVISÃO ARQUIVO POR ARQUIVO (PARALELISMO CONTROLADO) ─────────────
+    // ── [5] REVISÃO ARQUIVO POR ARQUIVO (PROCESSAMENTO PARALELO CONTROLADO) ──
     logger.info(`📝 Analisando ${files.length} arquivos...`);
 
-    for (const file of files) {
-      if (!file.to || file.chunks.length === 0) continue;
-
-      const validLines = new Set<number>();
-      let diffContent = "";
-
-      file.chunks.forEach((chunk: any) => {
-        chunk.changes.forEach((change: any) => {
-          if (change.type === "add") validLines.add(change.ln);
-          diffContent += `${change.type === "add" ? "+" : change.type === "del" ? "-" : " "}${change.content}\n`;
-        });
-      });
+    const analyzeFile = async (file: any) => {
+      if (!file.to || file.chunks.length === 0) return null;
 
       // Pular se for arquivo ignorado
       if (isIgnoredFile(file.to)) {
         logger.info(`⏭️ Ignorando arquivo: ${file.to}`);
-        continue;
+        return null;
       }
 
-      logger.info(`🔍 Analisando: ${file.to}`);
-      const findings = await orchestrator.reviewFile(
-        file.to,
-        diffContent,
-        Array.from(validLines),
-      );
+      logger.startGroup(`🔍 Analisando: ${file.to}`);
+      try {
+        const validLines = new Set<number>();
+        let diffContent = "";
 
-      if (findings.length > 0) {
-        logger.info(`✅ ${findings.length} achados em ${file.to}`);
-        allFindings.push(...findings);
+        file.chunks.forEach((chunk: any) => {
+          chunk.changes.forEach((change: any) => {
+            if (change.type === "add") validLines.add(change.ln);
+            diffContent += `${change.type === "add" ? "+" : change.type === "del" ? "-" : " "}${change.content}\n`;
+          });
+        });
+
+        const findings = await orchestrator.reviewFile(
+          file.to,
+          diffContent,
+          Array.from(validLines),
+        );
+
+        if (findings.length > 0) {
+          logger.info(`✅ ${findings.length} achados em ${file.to}`);
+          return findings;
+        }
+        return [];
+      } catch (error: any) {
+        logger.error(`❌ Erro ao analisar arquivo ${file.to}:`, error);
+        return [];
+      } finally {
+        logger.endGroup();
       }
+    };
+
+    // Executa em lotes de 3 arquivos para otimizar performance sem estourar limites de memória/IA
+    const BATCH_SIZE = 3;
+    for (let i = 0; i < files.length; i += BATCH_SIZE) {
+      const batch = files.slice(i, i + BATCH_SIZE);
+      const results = await Promise.all(batch.map(analyzeFile));
+      results.forEach((res) => {
+        if (res) allFindings.push(...res);
+      });
     }
 
     // ── [6] CONSOLIDAÇÃO E VEREDITO FINAL ────────────────────────────────────
@@ -136,8 +171,8 @@ async function run() {
       logger.info("📊 Gerando Resumo Executivo e Veredito Final...");
       const summary = await summaryAgent.summarize(allFindings);
 
-      // Posta o resumo como comentário principal
-      await ghService.createIssueComment(summary);
+      // Posta ou atualiza o resumo como comentário principal (Upsert)
+      await ghService.upsertSummaryComment(summary);
 
       // Posta os comentários inline
       await ghService.submitReview(allFindings);
@@ -159,7 +194,7 @@ async function run() {
       }
     } else {
       logger.info("✨ Nenhum problema encontrado. O código está excelente!");
-      await ghService.createIssueComment(
+      await ghService.upsertSummaryComment(
         "✅ **AI Code Review:** O conselho de agentes analisou seu código e não encontrou problemas. Bom trabalho!",
       );
     }
