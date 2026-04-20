@@ -22,7 +22,7 @@ export class AIService {
       },
       modelName: modelName,
       temperature: 0.2,
-      maxRetries: 5,
+      maxRetries: 7,
     });
   }
 

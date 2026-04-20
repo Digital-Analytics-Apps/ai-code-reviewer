@@ -28667,7 +28667,10 @@ ${this.SUMMARY_FINGERPRINT}`;
         }
       }
     } catch (error41) {
-      logger.warn("\u26A0\uFE0F Falha ao listar ou limpar coment\xE1rios de revis\xE3o:", error41);
+      logger.warn(
+        "\u26A0\uFE0F Falha ao listar ou limpar coment\xE1rios de revis\xE3o:",
+        error41
+      );
     }
   }
   /**
@@ -77052,7 +77055,7 @@ var AIService = class {
       },
       modelName,
       temperature: 0.2,
-      maxRetries: 5
+      maxRetries: 7
     });
   }
   /**
@@ -77608,9 +77611,13 @@ ${fileRules}` : fileRules;
         logger.endGroup();
       }
     };
-    const BATCH_SIZE = 3;
+    const BATCH_SIZE = 2;
     for (let i = 0; i < files.length; i += BATCH_SIZE) {
       const batch = files.slice(i, i + BATCH_SIZE);
+      if (i > 0) {
+        logger.info("\u23F3 Aguardando respiro para evitar Rate Limit (429)...");
+        await new Promise((res) => setTimeout(res, 1500));
+      }
       const results = await Promise.all(batch.map(analyzeFile));
       results.forEach((res) => {
         if (res) allFindings.push(...res);

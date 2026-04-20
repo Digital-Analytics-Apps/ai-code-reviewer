@@ -156,10 +156,16 @@ async function run() {
       }
     };
 
-    // Executa em lotes de 3 arquivos para otimizar performance sem estourar limites de memória/IA
-    const BATCH_SIZE = 3;
+    // Executa em lotes de 2 arquivos para respeitar limites de cota (Rate Limits)
+    const BATCH_SIZE = 2;
     for (let i = 0; i < files.length; i += BATCH_SIZE) {
       const batch = files.slice(i, i + BATCH_SIZE);
+
+      if (i > 0) {
+        logger.info("⏳ Aguardando respiro para evitar Rate Limit (429)...");
+        await new Promise((res) => setTimeout(res, 1500));
+      }
+
       const results = await Promise.all(batch.map(analyzeFile));
       results.forEach((res) => {
         if (res) allFindings.push(...res);
