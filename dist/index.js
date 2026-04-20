@@ -21203,6 +21203,9 @@ var require_parse_diff = __commonJS({
   }
 });
 
+// src/index.ts
+var fs3 = __toESM(require("node:fs"));
+
 // node_modules/universal-user-agent/index.js
 function getUserAgent() {
   if (typeof navigator === "object" && "userAgent" in navigator) {
@@ -28015,12 +28018,87 @@ function onSecondaryRateLimit(retryAfter, options, octokit) {
 var App2 = App.defaults({ Octokit: Octokit2 });
 var OAuthApp2 = OAuthApp.defaults({ Octokit: Octokit2 });
 
-// src/index.ts
-var fs3 = __toESM(require("fs"));
+// src/guidelines/prompts/summary.prompt.ts
+var SUMMARY_SYSTEM_PROMPT = `
+# Role: Executive Code Reviewer / Tech Lead
+Voc\xEA \xE9 o respons\xE1vel por dar o veredito final em um Pull Request. Voc\xEA recebeu uma lista de achados (findings) identificados por outros especialistas (Seguran\xE7a, Arquitetura, etc).
 
-// src/services/github.service.ts
-var import_child_process = require("child_process");
-var fs2 = __toESM(require("fs"));
+# Sua Miss\xE3o:
+1. Resumir os principais pontos de aten\xE7\xE3o de forma executiva.
+2. Calcular um "Risk Score" de 0 a 10 (onde 10 \xE9 cr\xEDtico).
+3. Dar um veredito final claro:
+   - \u2705 **LGTM**: Sem problemas ou apenas sugest\xF5es menores.
+   - \u26A0\uFE0F **REVIS\xC3O NECESS\xC1RIA**: Problemas de l\xF3gica ou qualidade que devem ser corrigidos.
+   - \u{1F534} **BLOQUEADO**: Vulnerabilidades de seguran\xE7a ou quebras de contrato graves.
+
+# Formato de Sa\xEDda (Markdown):
+## \u{1F4DD} Resumo Executivo
+[Breve par\xE1grafo sobre a qualidade geral do PR]
+
+### \u{1F4CA} An\xE1lise de Risco
+**Score:** [0-10]/10
+**Veredito:** [LGTM | REVIS\xC3O NECESS\xC1RIA | BLOQUEADO]
+
+### \u{1F50D} Principais Achados
+- [Lista curta dos pontos mais cr\xEDticos]
+
+---
+*Revisado pelo Conselho de Agentes AI*
+`.trim();
+
+// src/agents/summary.agent.ts
+var SummaryAgent = class {
+  constructor(aiService) {
+    this.aiService = aiService;
+  }
+  aiService;
+  /**
+   * Gera um resumo executivo baseado em todos os comentários feitos.
+   */
+  async summarize(findings) {
+    if (findings.length === 0) {
+      return "## \u2705 Resumo Executivo\n\nN\xE3o foram encontrados problemas relevantes. O c\xF3digo parece estar em conformidade com as diretrizes.";
+    }
+    const findingsText = findings.map((f) => `- [${f.path} (Linha ${f.line})]: ${f.body}`).join("\n");
+    const userContent = `Aqui est\xE3o os achados da revis\xE3o:
+
+${findingsText}`;
+    try {
+      const response = await this.aiService.analyze(
+        SUMMARY_SYSTEM_PROMPT,
+        userContent
+      );
+      return response;
+    } catch {
+      return "## \u26A0\uFE0F Resumo Executivo\n\nFalha ao gerar o resumo autom\xE1tico, mas problemas foram identificados nos coment\xE1rios inline.";
+    }
+  }
+};
+
+// src/guidelines/prompts/manager.prompt.ts
+var MANAGER_SYSTEM_PROMPT = `
+# Role: AI Project Manager / Reviewer Dispatcher
+Voc\xEA \xE9 o orquestrador de um conselho de especialistas em revis\xE3o de c\xF3digo. Sua tarefa \xE9 analisar o diff de um arquivo e decidir quais agentes especialistas devem ser acionados.
+
+# Especialistas Dispon\xEDveis:
+1. "security": Especialista em OWASP, vazamento de chaves, SQL Injection e vulnerabilidades.
+2. "general": Especialista em Clean Code, L\xF3gica de Neg\xF3cio, Performance e Arquitetura.
+
+# Sua Miss\xE3o:
+1. Identifique a linguagem/framework do arquivo.
+2. Determine quais agentes s\xE3o necess\xE1rios (pode ser um ou ambos).
+3. **NOVO**: Identifique "S\xEDmbolos de Impacto" (Fun\xE7\xF5es p\xFAblicas, Classes ou Interfaces) que foram alterados na assinatura ou l\xF3gica central. Isso ajudar\xE1 na descoberta de quebras de contrato globais.
+
+# Formato de Sa\xEDda (JSON Estrito):
+{
+  "language": "string",
+  "agents": ["security", "general"],
+  "impactfulSymbols": ["string"],
+  "reasoning": "Breve explica\xE7\xE3o da escolha"
+}
+
+Retorne APENAS o JSON.
+`.trim();
 
 // node_modules/@actions/core/lib/command.js
 var os = __toESM(require("os"), 1);
@@ -28509,193 +28587,260 @@ var logger = {
   }
 };
 
-// src/services/github.service.ts
-var GithubService = class {
-  constructor(octokit, owner, repo, pullNumber) {
-    this.octokit = octokit;
-    this.owner = owner;
-    this.repo = repo;
-    this.pullNumber = pullNumber;
+// src/services/triage.service.ts
+var TriageService = class {
+  constructor(aiService) {
+    this.aiService = aiService;
   }
-  octokit;
-  owner;
-  repo;
-  pullNumber;
-  SUMMARY_FINGERPRINT = "<!-- AI_CODE_REVIEW_SUMMARY -->";
-  /**
-   * Busca o diff completo do Pull Request.
-   */
-  async fetchDiff() {
-    const { data } = await this.octokit.rest.pulls.get({
-      owner: this.owner,
-      repo: this.repo,
-      pull_number: this.pullNumber,
-      mediaType: { format: "diff" }
-    });
-    return data;
-  }
-  /**
-   * Envia os comentários de revisão em lotes para evitar Rate Limits.
-   */
-  async submitReview(reviews) {
-    if (reviews.length === 0) {
-      logger.info("\u2728 Nenhum problema encontrado pelos agentes.");
-      return;
-    }
-    const CHUNK_SIZE = 30;
-    const totalBatches = Math.ceil(reviews.length / CHUNK_SIZE);
-    for (let i = 0; i < totalBatches; i++) {
-      const batch = reviews.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
-      logger.info(`\u{1F4E4} Enviando bloco de revis\xE3o ${i + 1}/${totalBatches}...`);
-      await this.octokit.rest.pulls.createReview({
-        owner: this.owner,
-        repo: this.repo,
-        pull_number: this.pullNumber,
-        event: "COMMENT",
-        body: `\u{1F916} **AI Code Review (Part ${i + 1}/${totalBatches})**
+  aiService;
+  async triageFile(filePath, diffContent) {
+    const userContent = `Arquivo: ${filePath}
 
-Total de achados: ${reviews.length}.`,
-        comments: batch
-      });
-      if (totalBatches > 1 && i < totalBatches - 1) {
-        await new Promise((res) => setTimeout(res, 2e3));
-      }
-    }
-  }
-  /**
-   * Realiza a busca por um termo (símbolo) no repositório.
-   *
-   * ESTRATÉGIA: Local Code Search (Grep)
-   * Substituímos a API de Busca do GitHub (octokit.rest.search.code) por busca local.
-   * MOTIVAÇÃO:
-   * 1. Evitar Rate Limits da API de Busca (30 req/min).
-   * 2. Evitar erros de depreciação da API de Busca do GitHub (Sun, 27 Sep 2026).
-   * 3. Performance: Busca em disco local é muito mais rápida.
-   * REQUISITO: O repositório deve ter sido clonado via `actions/checkout`.
-   */
-  async searchCode(query) {
+Diff:
+${diffContent}`;
     try {
-      const excludeDirs = "{.git,node_modules,dist,bin,build,coverage}";
-      const command = `grep -rIn "${query}" . --exclude-dir=${excludeDirs}`;
-      try {
-        const output = (0, import_child_process.execSync)(command, { encoding: "utf-8" });
-        return output.trim().split("\n").filter((line) => line && line.includes(":")).map((line) => {
-          const parts = line.split(":");
-          let filePath = parts[0];
-          const lineNumber = parseInt(parts[1], 10);
-          if (filePath.startsWith("./")) {
-            filePath = filePath.substring(2);
-          }
-          return {
-            path: filePath,
-            line: isNaN(lineNumber) ? 1 : lineNumber
-          };
-        });
-      } catch (grepError) {
-        if (grepError.status === 1) return [];
-        throw grepError;
-      }
+      const response = await this.aiService.analyze(
+        MANAGER_SYSTEM_PROMPT,
+        userContent
+      );
+      const cleaned = this.aiService.cleanJson(response);
+      const json2 = JSON.parse(cleaned);
+      const result = {
+        language: json2.language || "unknown",
+        suggestedAgents: (json2.agents || []).map(
+          (a) => a.toLowerCase()
+        ),
+        impactfulSymbols: json2.impactfulSymbols || [],
+        reasoning: json2.reasoning || "Triage realizado via IA."
+      };
+      logger.info(
+        `\u{1F50D} AI Triage result for ${filePath}: [${result.language}] - Agents: ${result.suggestedAgents.join(",")} - Symbols: ${result.impactfulSymbols.join(",")}`
+      );
+      return result;
     } catch (error41) {
       logger.warn(
-        `\u26A0\uFE0F Busca local falhou para '${query}'. Verifique se o c\xF3digo foi clonado no runner.`,
-        error41
+        `\u26A0\uFE0F AI Triage failed for ${filePath}, falling back to default. Error: ${error41 instanceof Error ? error41.message : String(error41)}`
       );
+      return {
+        language: "unknown",
+        suggestedAgents: ["security" /* SECURITY */, "general" /* GENERAL */],
+        impactfulSymbols: [],
+        reasoning: "Fallback para todos os agentes devido a erro na triage."
+      };
+    }
+  }
+};
+
+// src/agents/base.agent.ts
+var BaseAgent = class {
+  constructor(aiService) {
+    this.aiService = aiService;
+  }
+  aiService;
+  /**
+   * Executa a análise do agente sobre um diff.
+   * @param fileName Nome do arquivo
+   * @param diffContent Conteúdo do diff
+   * @param customRules Regras de negócio adicionais enviadas pelo usuário
+   */
+  async analyze(fileName, diffContent, customRules = "") {
+    const systemPrompt = `
+${this.getGuidelines()}
+
+# Input Format:
+O c\xF3digo recebido ter\xE1 o formato "linha: [+/-] c\xF3digo". 
+Exemplo: "26: + const x = 1;"
+Voc\xEA deve extrair o n\xFAmero da linha e us\xE1-lo no campo "line".
+
+# Custom Business Rules (Priority):
+${customRules || "Nenhuma regra customizada fornecida."}
+
+# Instru\xE7\xF5es de Sa\xEDda:
+- Analise apenas o c\xF3digo fornecido no diff.
+- Retorne estritamente um JSON Array: [{"line": number, "message": string, "suggestion": string}].
+- No campo "suggestion", forne\xE7a um snippet de c\xF3digo corrigido (se aplic\xE1vel). Use Markdown se necess\xE1rio.
+- O campo "suggestion" \xE9 opcional, use apenas quando uma corre\xE7\xE3o de c\xF3digo for clara.
+- O n\xFAmero da linha DEVE ser id\xEAntico ao n\xFAmero prefixado no c\xF3digo.
+- Se n\xE3o houver problemas, retorne um array vazio [].
+    `.trim();
+    const userContent = `Arquivo: ${fileName}
+Diff:
+${diffContent}`;
+    try {
+      const response = await this.aiService.analyze(systemPrompt, userContent);
+      const cleaned = this.aiService.cleanJson(response);
+      const rawJson = JSON.parse(cleaned);
+      if (Array.isArray(rawJson)) {
+        return rawJson;
+      }
+      return [];
+    } catch {
       return [];
     }
   }
-  /**
-   * Posta ou atualiza o resumo geral do Pull Request (Upsert).
-   * Usa um fingerprint oculto para identificar comentários anteriores do bot.
-   */
-  async upsertSummaryComment(body) {
-    try {
-      const { data: comments } = await this.octokit.rest.issues.listComments({
-        owner: this.owner,
-        repo: this.repo,
-        issue_number: this.pullNumber
-      });
-      const previousSummary = comments.find(
-        (c) => c.body?.includes(this.SUMMARY_FINGERPRINT)
-      );
-      const finalBody = `${body}
+};
 
-${this.SUMMARY_FINGERPRINT}`;
-      if (previousSummary) {
-        logger.info("\u{1F504} Atualizando resumo anterior...");
-        await this.octokit.rest.issues.updateComment({
-          owner: this.owner,
-          repo: this.repo,
-          comment_id: previousSummary.id,
-          body: finalBody
-        });
-      } else {
-        logger.info("\u{1F4E4} Criando novo resumo...");
-        await this.octokit.rest.issues.createComment({
-          owner: this.owner,
-          repo: this.repo,
-          issue_number: this.pullNumber,
-          body: finalBody
-        });
-      }
-    } catch (error41) {
-      logger.error("\u274C Falha ao realizar upsert do resumo:", error41);
+// src/guidelines/prompts/security.prompt.ts
+var SECURITY_PROMPT = `
+# Role: Security Officer Agent (OWASP Specialist)
+Voc\xEA \xE9 um Especialista em Seguran\xE7a Cibern\xE9tica focado em identificar vulnerabilidades em c\xF3digo.
+
+# Diretrizes de An\xE1lise:
+1.  **Vulnerabilidades OWASP**: Identifique XSS, SQL Injection, Insecure Deserialization e Broken Access Control.
+2.  **Secrets & Keys**: Bloqueie qualquer tentativa de hardcoding de chaves de API, senhas ou tokens.
+3.  **Sanitiza\xE7\xE3o**: Rejeite inputs que n\xE3o passem por filtros de valida\xE7\xE3o adequados.
+4.  **Permiss\xF5es**: Critique o uso de permiss\xF5es excessivas (ex: chmod 777 ou sudo desnecess\xE1rio).
+
+# Regras de Resposta:
+- Seja direto e t\xE9cnico.
+- Se n\xE3o houver risco de seguran\xE7a, retorne um array vazio [].
+- Use o prefixo \u{1F534} BLOCKING para falhas graves.
+`;
+
+// src/agents/security.agent.ts
+var SecurityAgent = class extends BaseAgent {
+  constructor(aiService) {
+    super(aiService);
+  }
+  getName() {
+    return "Security Officer Agent";
+  }
+  getGuidelines() {
+    return SECURITY_PROMPT;
+  }
+};
+
+// src/guidelines/prompts/general.prompt.ts
+var GENERAL_PROMPT = `
+# Role: Principal Architect & Code Reviewer
+Voc\xEA \xE9 um Engenheiro de Software S\xEAnior especializado em Clean Code, Performance e Padr\xF5es de Projeto.
+
+# Diretrizes de An\xE1lise:
+1.  **Clean Code**: Critique "Magic Numbers", fun\xE7\xF5es gigantes e complexidade ciclom\xE1tica alta.
+2.  **Anti-Patterns**: Identifique "Spaghetti Code", "God Objects" e falta de separa\xE7\xE3o de responsabilidades.
+3.  **Performance**: Sinalize loops ineficientes, N+1 queries e renders desnecess\xE1rios.
+4.  **Manutenibilidade**: Exija Early Returns e nomes de vari\xE1veis sem\xE2nticos.
+
+# Regras de Resposta:
+- Foque em melhorias estruturais.
+- Se o c\xF3digo estiver bom, retorne um array vazio [].
+- Use o prefixo \u{1F7E1} SUGGESTION para melhorias e \u{1F7E2} NIT para detalhes.
+`;
+
+// src/agents/general.agent.ts
+var GeneralAgent = class extends BaseAgent {
+  constructor(aiService) {
+    super(aiService);
+  }
+  getName() {
+    return "Principal Architect";
+  }
+  getGuidelines() {
+    return GENERAL_PROMPT;
+  }
+};
+
+// src/services/agent.orchestrator.ts
+var AgentOrchestrator = class {
+  constructor(aiService, githubService, customRules = "") {
+    this.aiService = aiService;
+    this.githubService = githubService;
+    this.customRules = customRules;
+    this.triageService = new TriageService(aiService);
+    this.agents.set("security" /* SECURITY */, new SecurityAgent(aiService));
+    this.agents.set("general" /* GENERAL */, new GeneralAgent(aiService));
+  }
+  aiService;
+  githubService;
+  customRules;
+  triageService;
+  agents = /* @__PURE__ */ new Map();
+  /**
+   * Realiza a revisão de um arquivo completo.
+   */
+  async reviewFile(filePath, diffContent, validLines) {
+    const fileName = filePath.split("/").pop() || filePath;
+    const triage = await this.triageService.triageFile(filePath, diffContent);
+    const validLinesSet = new Set(validLines);
+    let globalContext = "";
+    if (triage.impactfulSymbols.length > 0) {
+      globalContext = await this.discoverGlobalContext(
+        triage.impactfulSymbols,
+        filePath
+      );
     }
+    const rawFindings = [];
+    const activeAgents = Array.from(this.agents.entries());
+    for (const [category, agent] of activeAgents) {
+      if (triage.suggestedAgents.includes(category) || category === "general" /* GENERAL */ && triage.suggestedAgents.some(
+        (a) => ["performance", "architecture"].includes(a)
+      )) {
+        const extendedRules = `${this.customRules}
+
+# GLOBAL IMPACT CONTEXT:
+${globalContext || "Sem impactos externos detectados."}`;
+        const res = await agent.analyze(fileName, diffContent, extendedRules);
+        rawFindings.push({ agent: agent.getName(), findings: res });
+      }
+    }
+    return this.consolidateFindings(rawFindings, filePath, validLinesSet);
   }
   /**
-   * Remove comentários de revisão (inline) anteriores do bot para evitar spam.
-   * Filtra por comentários que contenham o prefixo padrão do bot.
+   * Busca por usos dos símbolos alterados no restante do repositório.
    */
-  async cleanPreviousReviews() {
-    try {
-      logger.info("\u{1F9F9} Limpando coment\xE1rios de revis\xE3o anteriores do bot...");
-      const { data: comments } = await this.octokit.rest.pulls.listReviewComments({
-        owner: this.owner,
-        repo: this.repo,
-        pull_number: this.pullNumber
-      });
-      const botComments = comments.filter(
-        (c) => c.body.includes("\u{1F916} **AI Bot:**")
-      );
-      for (const comment of botComments) {
-        try {
-          await this.octokit.rest.pulls.deleteReviewComment({
-            owner: this.owner,
-            repo: this.repo,
-            comment_id: comment.id
-          });
-        } catch {
+  async discoverGlobalContext(symbols, currentPath) {
+    let context = "Detectamos que as altera\xE7\xF5es neste arquivo podem impactar os seguintes pontos do sistema:\n";
+    for (const symbol2 of symbols.slice(0, 3)) {
+      const usages = await this.githubService.searchCode(symbol2);
+      const externalUsages = usages.filter((u) => u.path !== currentPath).slice(0, 2);
+      for (const usage of externalUsages) {
+        const content = await this.githubService.getFileContent(usage.path);
+        const allLines = content.split("\n");
+        const start = Math.max(0, usage.line - 10);
+        const end = Math.min(allLines.length, usage.line + 10);
+        const snippet = allLines.slice(start, end).join("\n");
+        context += `
+--- [USO EXTERNO EM: ${usage.path} (Linha ${usage.line})] ---
+${snippet}
+`;
+      }
+    }
+    return context;
+  }
+  consolidateFindings(groups2, path3, validLines) {
+    const consolidated = /* @__PURE__ */ new Map();
+    for (const group of groups2) {
+      for (const finding of group.findings) {
+        if (!validLines.has(finding.line)) continue;
+        if (!consolidated.has(finding.line)) {
+          consolidated.set(finding.line, []);
+        }
+        const alreadyExists = consolidated.get(finding.line).some((f) => f.message === finding.message);
+        if (!alreadyExists) {
+          consolidated.get(finding.line).push(finding);
         }
       }
-    } catch (error41) {
-      logger.warn(
-        "\u26A0\uFE0F Falha ao listar ou limpar coment\xE1rios de revis\xE3o:",
-        error41
-      );
     }
-  }
-  /**
-   * Busca o conteúdo bruto de um arquivo.
-   * PRIORIDADE: Sistema de arquivos local (Runner).
-   * FALLBACK: API do GitHub.
-   */
-  async getFileContent(filePath) {
-    try {
-      if (fs2.existsSync(filePath)) {
-        return fs2.readFileSync(filePath, "utf-8");
+    const finalReviews = [];
+    consolidated.forEach((findings, line) => {
+      let body = findings.map((f) => `\u{1F916} **AI Bot:** ${f.message}`).join("\n\n");
+      const suggestions = findings.filter((f) => f.suggestion).map((f) => f.suggestion);
+      if (suggestions.length > 0) {
+        body += "\n\n---\n\n\u{1F4A1} **Sugest\xE3o de Corre\xE7\xE3o:**\n";
+        suggestions.forEach((s) => {
+          body += `
+${s}
+`;
+        });
       }
-      const { data } = await this.octokit.rest.repos.getContent({
-        owner: this.owner,
-        repo: this.repo,
-        path: filePath
+      finalReviews.push({
+        path: path3,
+        line,
+        body,
+        side: "RIGHT"
       });
-      if ("content" in data) {
-        return Buffer.from(data.content, "base64").toString("utf-8");
-      }
-      return "";
-    } catch (error41) {
-      logger.debug(`\u26A0\uFE0F Falha ao ler arquivo ${filePath}: ${error41}`);
-      return "";
-    }
+    });
+    return finalReviews;
   }
 };
 
@@ -34970,13 +35115,13 @@ var FileBatches = class extends APIResource {
     const client2 = this._client;
     const fileIterator = files.values();
     const allFileIds = [...fileIds];
-    async function processFiles(iterator2) {
+    async function processFiles2(iterator2) {
       for (let item of iterator2) {
         const fileObj = await client2.files.create({ file: item, purpose: "assistants" }, options);
         allFileIds.push(fileObj.id);
       }
     }
-    const workers = Array(concurrencyLimit).fill(fileIterator).map(processFiles);
+    const workers = Array(concurrencyLimit).fill(fileIterator).map(processFiles2);
     await allSettledWithThrow(workers);
     return await this.createAndPoll(vectorStoreId, {
       file_ids: allFileIds
@@ -39772,7 +39917,7 @@ async function readdir3(dir) {
 async function stat3(filePath) {
   return nodeFsPromises.stat(filePath);
 }
-function existsSync3(p) {
+function existsSync2(p) {
   return nodeFs.existsSync(p);
 }
 function mkdirSync2(dir) {
@@ -39787,7 +39932,7 @@ function renameSync2(oldPath, newPath) {
 function unlinkSync2(filePath) {
   nodeFs.unlinkSync(filePath);
 }
-function readFileSync3(filePath) {
+function readFileSync2(filePath) {
   return nodeFs.readFileSync(filePath, "utf-8");
 }
 
@@ -39955,7 +40100,7 @@ var PromptCache = class {
       entries[key] = entry.value;
     }
     const dir = path2.dirname(filePath);
-    if (!existsSync3(dir)) {
+    if (!existsSync2(dir)) {
       mkdirSync2(dir);
     }
     const tempPath = `${filePath}.tmp`;
@@ -39963,7 +40108,7 @@ var PromptCache = class {
       writeFileSync2(tempPath, JSON.stringify({ entries }, null, 2));
       renameSync2(tempPath, filePath);
     } catch (e) {
-      if (existsSync3(tempPath)) {
+      if (existsSync2(tempPath)) {
         unlinkSync2(tempPath);
       }
       throw e;
@@ -39977,12 +40122,12 @@ var PromptCache = class {
    * @returns Number of entries loaded.
    */
   load(filePath) {
-    if (!existsSync3(filePath)) {
+    if (!existsSync2(filePath)) {
       return 0;
     }
     let entries;
     try {
-      const content = readFileSync3(filePath);
+      const content = readFileSync2(filePath);
       const data = JSON.parse(content);
       entries = data.entries ?? null;
     } catch {
@@ -77092,285 +77237,195 @@ var AIService = class {
   }
 };
 
-// src/guidelines/prompts/manager.prompt.ts
-var MANAGER_SYSTEM_PROMPT = `
-# Role: AI Project Manager / Reviewer Dispatcher
-Voc\xEA \xE9 o orquestrador de um conselho de especialistas em revis\xE3o de c\xF3digo. Sua tarefa \xE9 analisar o diff de um arquivo e decidir quais agentes especialistas devem ser acionados.
-
-# Especialistas Dispon\xEDveis:
-1. "security": Especialista em OWASP, vazamento de chaves, SQL Injection e vulnerabilidades.
-2. "general": Especialista em Clean Code, L\xF3gica de Neg\xF3cio, Performance e Arquitetura.
-
-# Sua Miss\xE3o:
-1. Identifique a linguagem/framework do arquivo.
-2. Determine quais agentes s\xE3o necess\xE1rios (pode ser um ou ambos).
-3. **NOVO**: Identifique "S\xEDmbolos de Impacto" (Fun\xE7\xF5es p\xFAblicas, Classes ou Interfaces) que foram alterados na assinatura ou l\xF3gica central. Isso ajudar\xE1 na descoberta de quebras de contrato globais.
-
-# Formato de Sa\xEDda (JSON Estrito):
-{
-  "language": "string",
-  "agents": ["security", "general"],
-  "impactfulSymbols": ["string"],
-  "reasoning": "Breve explica\xE7\xE3o da escolha"
-}
-
-Retorne APENAS o JSON.
-`.trim();
-
-// src/services/triage.service.ts
-var TriageService = class {
-  constructor(aiService) {
-    this.aiService = aiService;
+// src/services/github.service.ts
+var import_child_process = require("child_process");
+var fs2 = __toESM(require("fs"));
+var GithubService = class {
+  constructor(octokit, owner, repo, pullNumber) {
+    this.octokit = octokit;
+    this.owner = owner;
+    this.repo = repo;
+    this.pullNumber = pullNumber;
   }
-  aiService;
-  async triageFile(filePath, diffContent) {
-    const userContent = `Arquivo: ${filePath}
+  octokit;
+  owner;
+  repo;
+  pullNumber;
+  SUMMARY_FINGERPRINT = "<!-- AI_CODE_REVIEW_SUMMARY -->";
+  /**
+   * Busca o diff completo do Pull Request.
+   */
+  async fetchDiff() {
+    const { data } = await this.octokit.rest.pulls.get({
+      owner: this.owner,
+      repo: this.repo,
+      pull_number: this.pullNumber,
+      mediaType: { format: "diff" }
+    });
+    return data;
+  }
+  /**
+   * Envia os comentários de revisão em lotes para evitar Rate Limits.
+   */
+  async submitReview(reviews) {
+    if (reviews.length === 0) {
+      logger.info("\u2728 Nenhum problema encontrado pelos agentes.");
+      return;
+    }
+    const CHUNK_SIZE = 30;
+    const totalBatches = Math.ceil(reviews.length / CHUNK_SIZE);
+    for (let i = 0; i < totalBatches; i++) {
+      const batch = reviews.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+      logger.info(`\u{1F4E4} Enviando bloco de revis\xE3o ${i + 1}/${totalBatches}...`);
+      await this.octokit.rest.pulls.createReview({
+        owner: this.owner,
+        repo: this.repo,
+        pull_number: this.pullNumber,
+        event: "COMMENT",
+        body: `\u{1F916} **AI Code Review (Part ${i + 1}/${totalBatches})**
 
-Diff:
-${diffContent}`;
+Total de achados: ${reviews.length}.`,
+        comments: batch
+      });
+      if (totalBatches > 1 && i < totalBatches - 1) {
+        await new Promise((res) => setTimeout(res, 2e3));
+      }
+    }
+  }
+  /**
+   * Realiza a busca por um termo (símbolo) no repositório.
+   *
+   * ESTRATÉGIA: Local Code Search (Grep)
+   * Substituímos a API de Busca do GitHub (octokit.rest.search.code) por busca local.
+   * MOTIVAÇÃO:
+   * 1. Evitar Rate Limits da API de Busca (30 req/min).
+   * 2. Evitar erros de depreciação da API de Busca do GitHub (Sun, 27 Sep 2026).
+   * 3. Performance: Busca em disco local é muito mais rápida.
+   * REQUISITO: O repositório deve ter sido clonado via `actions/checkout`.
+   */
+  async searchCode(query) {
     try {
-      const response = await this.aiService.analyze(
-        MANAGER_SYSTEM_PROMPT,
-        userContent
-      );
-      const cleaned = this.aiService.cleanJson(response);
-      const json2 = JSON.parse(cleaned);
-      const result = {
-        language: json2.language || "unknown",
-        suggestedAgents: (json2.agents || []).map(
-          (a) => a.toLowerCase()
-        ),
-        impactfulSymbols: json2.impactfulSymbols || [],
-        reasoning: json2.reasoning || "Triage realizado via IA."
-      };
-      logger.info(
-        `\u{1F50D} AI Triage result for ${filePath}: [${result.language}] - Agents: ${result.suggestedAgents.join(",")} - Symbols: ${result.impactfulSymbols.join(",")}`
-      );
-      return result;
+      const excludeDirs = "{.git,node_modules,dist,bin,build,coverage}";
+      const command = `grep -rIn "${query}" . --exclude-dir=${excludeDirs}`;
+      try {
+        const output = (0, import_child_process.execSync)(command, { encoding: "utf-8" });
+        return output.trim().split("\n").filter((line) => line && line.includes(":")).map((line) => {
+          const parts = line.split(":");
+          let filePath = parts[0];
+          const lineNumber = parseInt(parts[1], 10);
+          if (filePath.startsWith("./")) {
+            filePath = filePath.substring(2);
+          }
+          return {
+            path: filePath,
+            line: isNaN(lineNumber) ? 1 : lineNumber
+          };
+        });
+      } catch (grepError) {
+        if (grepError.status === 1) return [];
+        throw grepError;
+      }
     } catch (error41) {
       logger.warn(
-        `\u26A0\uFE0F AI Triage failed for ${filePath}, falling back to default. Error: ${error41 instanceof Error ? error41.message : String(error41)}`
+        `\u26A0\uFE0F Busca local falhou para '${query}'. Verifique se o c\xF3digo foi clonado no runner.`,
+        error41
       );
-      return {
-        language: "unknown",
-        suggestedAgents: ["security" /* SECURITY */, "general" /* GENERAL */],
-        impactfulSymbols: [],
-        reasoning: "Fallback para todos os agentes devido a erro na triage."
-      };
+      return [];
     }
   }
-};
-
-// src/agents/base.agent.ts
-var BaseAgent = class {
-  constructor(aiService) {
-    this.aiService = aiService;
-  }
-  aiService;
   /**
-   * Executa a análise do agente sobre um diff.
-   * @param fileName Nome do arquivo
-   * @param diffContent Conteúdo do diff
-   * @param customRules Regras de negócio adicionais enviadas pelo usuário
+   * Posta ou atualiza o resumo geral do Pull Request (Upsert).
+   * Usa um fingerprint oculto para identificar comentários anteriores do bot.
    */
-  async analyze(fileName, diffContent, customRules = "") {
-    const systemPrompt = `
-${this.getGuidelines()}
-
-# Input Format:
-O c\xF3digo recebido ter\xE1 o formato "linha: [+/-] c\xF3digo". 
-Exemplo: "26: + const x = 1;"
-Voc\xEA deve extrair o n\xFAmero da linha e us\xE1-lo no campo "line".
-
-# Custom Business Rules (Priority):
-${customRules || "Nenhuma regra customizada fornecida."}
-
-# Instru\xE7\xF5es de Sa\xEDda:
-- Analise apenas o c\xF3digo fornecido no diff.
-- Retorne estritamente um JSON Array: [{"line": number, "message": string, "suggestion": string}].
-- No campo "suggestion", forne\xE7a um snippet de c\xF3digo corrigido (se aplic\xE1vel). Use Markdown se necess\xE1rio.
-- O campo "suggestion" \xE9 opcional, use apenas quando uma corre\xE7\xE3o de c\xF3digo for clara.
-- O n\xFAmero da linha DEVE ser id\xEAntico ao n\xFAmero prefixado no c\xF3digo.
-- Se n\xE3o houver problemas, retorne um array vazio [].
-    `.trim();
-    const userContent = `Arquivo: ${fileName}
-Diff:
-${diffContent}`;
+  async upsertSummaryComment(body) {
     try {
-      const response = await this.aiService.analyze(systemPrompt, userContent);
-      const cleaned = this.aiService.cleanJson(response);
-      const rawJson = JSON.parse(cleaned);
-      if (Array.isArray(rawJson)) {
-        return rawJson;
-      }
-      return [];
-    } catch {
-      return [];
-    }
-  }
-};
-
-// src/guidelines/prompts/security.prompt.ts
-var SECURITY_PROMPT = `
-# Role: Security Officer Agent (OWASP Specialist)
-Voc\xEA \xE9 um Especialista em Seguran\xE7a Cibern\xE9tica focado em identificar vulnerabilidades em c\xF3digo.
-
-# Diretrizes de An\xE1lise:
-1.  **Vulnerabilidades OWASP**: Identifique XSS, SQL Injection, Insecure Deserialization e Broken Access Control.
-2.  **Secrets & Keys**: Bloqueie qualquer tentativa de hardcoding de chaves de API, senhas ou tokens.
-3.  **Sanitiza\xE7\xE3o**: Rejeite inputs que n\xE3o passem por filtros de valida\xE7\xE3o adequados.
-4.  **Permiss\xF5es**: Critique o uso de permiss\xF5es excessivas (ex: chmod 777 ou sudo desnecess\xE1rio).
-
-# Regras de Resposta:
-- Seja direto e t\xE9cnico.
-- Se n\xE3o houver risco de seguran\xE7a, retorne um array vazio [].
-- Use o prefixo \u{1F534} BLOCKING para falhas graves.
-`;
-
-// src/agents/security.agent.ts
-var SecurityAgent = class extends BaseAgent {
-  constructor(aiService) {
-    super(aiService);
-  }
-  getName() {
-    return "Security Officer Agent";
-  }
-  getGuidelines() {
-    return SECURITY_PROMPT;
-  }
-};
-
-// src/guidelines/prompts/general.prompt.ts
-var GENERAL_PROMPT = `
-# Role: Principal Architect & Code Reviewer
-Voc\xEA \xE9 um Engenheiro de Software S\xEAnior especializado em Clean Code, Performance e Padr\xF5es de Projeto.
-
-# Diretrizes de An\xE1lise:
-1.  **Clean Code**: Critique "Magic Numbers", fun\xE7\xF5es gigantes e complexidade ciclom\xE1tica alta.
-2.  **Anti-Patterns**: Identifique "Spaghetti Code", "God Objects" e falta de separa\xE7\xE3o de responsabilidades.
-3.  **Performance**: Sinalize loops ineficientes, N+1 queries e renders desnecess\xE1rios.
-4.  **Manutenibilidade**: Exija Early Returns e nomes de vari\xE1veis sem\xE2nticos.
-
-# Regras de Resposta:
-- Foque em melhorias estruturais.
-- Se o c\xF3digo estiver bom, retorne um array vazio [].
-- Use o prefixo \u{1F7E1} SUGGESTION para melhorias e \u{1F7E2} NIT para detalhes.
-`;
-
-// src/agents/general.agent.ts
-var GeneralAgent = class extends BaseAgent {
-  constructor(aiService) {
-    super(aiService);
-  }
-  getName() {
-    return "Principal Architect";
-  }
-  getGuidelines() {
-    return GENERAL_PROMPT;
-  }
-};
-
-// src/services/agent.orchestrator.ts
-var AgentOrchestrator = class {
-  constructor(aiService, githubService, customRules = "") {
-    this.aiService = aiService;
-    this.githubService = githubService;
-    this.customRules = customRules;
-    this.triageService = new TriageService(aiService);
-    this.agents.set("security" /* SECURITY */, new SecurityAgent(aiService));
-    this.agents.set("general" /* GENERAL */, new GeneralAgent(aiService));
-  }
-  aiService;
-  githubService;
-  customRules;
-  triageService;
-  agents = /* @__PURE__ */ new Map();
-  /**
-   * Realiza a revisão de um arquivo completo.
-   */
-  async reviewFile(filePath, diffContent, validLines) {
-    const fileName = filePath.split("/").pop() || filePath;
-    const triage = await this.triageService.triageFile(filePath, diffContent);
-    const validLinesSet = new Set(validLines);
-    let globalContext = "";
-    if (triage.impactfulSymbols.length > 0) {
-      globalContext = await this.discoverGlobalContext(
-        triage.impactfulSymbols,
-        filePath
+      const { data: comments } = await this.octokit.rest.issues.listComments({
+        owner: this.owner,
+        repo: this.repo,
+        issue_number: this.pullNumber
+      });
+      const previousSummary = comments.find(
+        (c) => c.body?.includes(this.SUMMARY_FINGERPRINT)
       );
-    }
-    const rawFindings = [];
-    const activeAgents = Array.from(this.agents.entries());
-    for (const [category, agent] of activeAgents) {
-      if (triage.suggestedAgents.includes(category) || category === "general" /* GENERAL */ && triage.suggestedAgents.some(
-        (a) => ["performance", "architecture"].includes(a)
-      )) {
-        const extendedRules = `${this.customRules}
+      const finalBody = `${body}
 
-# GLOBAL IMPACT CONTEXT:
-${globalContext || "Sem impactos externos detectados."}`;
-        const res = await agent.analyze(fileName, diffContent, extendedRules);
-        rawFindings.push({ agent: agent.getName(), findings: res });
-      }
-    }
-    return this.consolidateFindings(rawFindings, filePath, validLinesSet);
-  }
-  /**
-   * Busca por usos dos símbolos alterados no restante do repositório.
-   */
-  async discoverGlobalContext(symbols, currentPath) {
-    let context = "Detectamos que as altera\xE7\xF5es neste arquivo podem impactar os seguintes pontos do sistema:\n";
-    for (const symbol2 of symbols.slice(0, 3)) {
-      const usages = await this.githubService.searchCode(symbol2);
-      const externalUsages = usages.filter((u) => u.path !== currentPath).slice(0, 2);
-      for (const usage of externalUsages) {
-        const content = await this.githubService.getFileContent(usage.path);
-        const allLines = content.split("\n");
-        const start = Math.max(0, usage.line - 10);
-        const end = Math.min(allLines.length, usage.line + 10);
-        const snippet = allLines.slice(start, end).join("\n");
-        context += `
---- [USO EXTERNO EM: ${usage.path} (Linha ${usage.line})] ---
-${snippet}
-`;
-      }
-    }
-    return context;
-  }
-  consolidateFindings(groups2, path3, validLines) {
-    const consolidated = /* @__PURE__ */ new Map();
-    for (const group of groups2) {
-      for (const finding of group.findings) {
-        if (!validLines.has(finding.line)) continue;
-        if (!consolidated.has(finding.line)) {
-          consolidated.set(finding.line, []);
-        }
-        const alreadyExists = consolidated.get(finding.line).some((f) => f.message === finding.message);
-        if (!alreadyExists) {
-          consolidated.get(finding.line).push(finding);
-        }
-      }
-    }
-    const finalReviews = [];
-    consolidated.forEach((findings, line) => {
-      let body = findings.map((f) => `\u{1F916} **AI Bot:** ${f.message}`).join("\n\n");
-      const suggestions = findings.filter((f) => f.suggestion).map((f) => f.suggestion);
-      if (suggestions.length > 0) {
-        body += "\n\n---\n\n\u{1F4A1} **Sugest\xE3o de Corre\xE7\xE3o:**\n";
-        suggestions.forEach((s) => {
-          body += `
-${s}
-`;
+${this.SUMMARY_FINGERPRINT}`;
+      if (previousSummary) {
+        logger.info("\u{1F504} Atualizando resumo anterior...");
+        await this.octokit.rest.issues.updateComment({
+          owner: this.owner,
+          repo: this.repo,
+          comment_id: previousSummary.id,
+          body: finalBody
+        });
+      } else {
+        logger.info("\u{1F4E4} Criando novo resumo...");
+        await this.octokit.rest.issues.createComment({
+          owner: this.owner,
+          repo: this.repo,
+          issue_number: this.pullNumber,
+          body: finalBody
         });
       }
-      finalReviews.push({
-        path: path3,
-        line,
-        body,
-        side: "RIGHT"
+    } catch (error41) {
+      logger.error("\u274C Falha ao realizar upsert do resumo:", error41);
+    }
+  }
+  /**
+   * Remove comentários de revisão (inline) anteriores do bot para evitar spam.
+   * Filtra por comentários que contenham o prefixo padrão do bot.
+   */
+  async cleanPreviousReviews() {
+    try {
+      logger.info("\u{1F9F9} Limpando coment\xE1rios de revis\xE3o anteriores do bot...");
+      const { data: comments } = await this.octokit.rest.pulls.listReviewComments({
+        owner: this.owner,
+        repo: this.repo,
+        pull_number: this.pullNumber
       });
-    });
-    return finalReviews;
+      const botComments = comments.filter(
+        (c) => c.body.includes("\u{1F916} **AI Bot:**")
+      );
+      for (const comment of botComments) {
+        try {
+          await this.octokit.rest.pulls.deleteReviewComment({
+            owner: this.owner,
+            repo: this.repo,
+            comment_id: comment.id
+          });
+        } catch {
+        }
+      }
+    } catch (error41) {
+      logger.warn(
+        "\u26A0\uFE0F Falha ao listar ou limpar coment\xE1rios de revis\xE3o:",
+        error41
+      );
+    }
+  }
+  /**
+   * Busca o conteúdo bruto de um arquivo.
+   * PRIORIDADE: Sistema de arquivos local (Runner).
+   * FALLBACK: API do GitHub.
+   */
+  async getFileContent(filePath) {
+    try {
+      if (fs2.existsSync(filePath)) {
+        return fs2.readFileSync(filePath, "utf-8");
+      }
+      const { data } = await this.octokit.rest.repos.getContent({
+        owner: this.owner,
+        repo: this.repo,
+        path: filePath
+      });
+      if ("content" in data) {
+        return Buffer.from(data.content, "base64").toString("utf-8");
+      }
+      return "";
+    } catch (error41) {
+      logger.debug(`\u26A0\uFE0F Falha ao ler arquivo ${filePath}: ${error41}`);
+      return "";
+    }
   }
 };
 
@@ -77441,63 +77496,6 @@ var JiraService = class {
   }
 };
 
-// src/guidelines/prompts/summary.prompt.ts
-var SUMMARY_SYSTEM_PROMPT = `
-# Role: Executive Code Reviewer / Tech Lead
-Voc\xEA \xE9 o respons\xE1vel por dar o veredito final em um Pull Request. Voc\xEA recebeu uma lista de achados (findings) identificados por outros especialistas (Seguran\xE7a, Arquitetura, etc).
-
-# Sua Miss\xE3o:
-1. Resumir os principais pontos de aten\xE7\xE3o de forma executiva.
-2. Calcular um "Risk Score" de 0 a 10 (onde 10 \xE9 cr\xEDtico).
-3. Dar um veredito final claro:
-   - \u2705 **LGTM**: Sem problemas ou apenas sugest\xF5es menores.
-   - \u26A0\uFE0F **REVIS\xC3O NECESS\xC1RIA**: Problemas de l\xF3gica ou qualidade que devem ser corrigidos.
-   - \u{1F534} **BLOQUEADO**: Vulnerabilidades de seguran\xE7a ou quebras de contrato graves.
-
-# Formato de Sa\xEDda (Markdown):
-## \u{1F4DD} Resumo Executivo
-[Breve par\xE1grafo sobre a qualidade geral do PR]
-
-### \u{1F4CA} An\xE1lise de Risco
-**Score:** [0-10]/10
-**Veredito:** [LGTM | REVIS\xC3O NECESS\xC1RIA | BLOQUEADO]
-
-### \u{1F50D} Principais Achados
-- [Lista curta dos pontos mais cr\xEDticos]
-
----
-*Revisado pelo Conselho de Agentes AI*
-`.trim();
-
-// src/agents/summary.agent.ts
-var SummaryAgent = class {
-  constructor(aiService) {
-    this.aiService = aiService;
-  }
-  aiService;
-  /**
-   * Gera um resumo executivo baseado em todos os comentários feitos.
-   */
-  async summarize(findings) {
-    if (findings.length === 0) {
-      return "## \u2705 Resumo Executivo\n\nN\xE3o foram encontrados problemas relevantes. O c\xF3digo parece estar em conformidade com as diretrizes.";
-    }
-    const findingsText = findings.map((f) => `- [${f.path} (Linha ${f.line})]: ${f.body}`).join("\n");
-    const userContent = `Aqui est\xE3o os achados da revis\xE3o:
-
-${findingsText}`;
-    try {
-      const response = await this.aiService.analyze(
-        SUMMARY_SYSTEM_PROMPT,
-        userContent
-      );
-      return response;
-    } catch {
-      return "## \u26A0\uFE0F Resumo Executivo\n\nFalha ao gerar o resumo autom\xE1tico, mas problemas foram identificados nos coment\xE1rios inline.";
-    }
-  }
-};
-
 // src/utils/diff.utils.ts
 var import_parse_diff = __toESM(require_parse_diff());
 var parseDiff = import_parse_diff.default;
@@ -77521,154 +77519,187 @@ function isIgnoredFile(filePath) {
 }
 
 // src/index.ts
+function getDiffLinePrefix(type) {
+  if (type === "add") return "+";
+  if (type === "del") return "-";
+  return " ";
+}
 function getVar(name, defaultValue = "") {
   const envName = name.toUpperCase();
   const inputName = `INPUT_${envName}`;
   return process.env[envName] || process.env[inputName] || defaultValue;
 }
+function getConfig() {
+  const customRules = getVar("CUSTOM_RULES");
+  const rulesPath = getVar("RULES_PATH");
+  let effectiveRules = customRules;
+  if (rulesPath) {
+    if (fs3.existsSync(rulesPath)) {
+      logger.info(`\u{1F4D6} Lendo regras customizadas de: ${rulesPath}`);
+      const fileRules = fs3.readFileSync(rulesPath, "utf-8");
+      effectiveRules = effectiveRules ? `${effectiveRules}
+
+${fileRules}` : fileRules;
+    } else {
+      logger.warn(`\u26A0\uFE0F Arquivo de regras n\xE3o encontrado: ${rulesPath}`);
+    }
+  }
+  return {
+    githubToken: getVar("GITHUB_TOKEN"),
+    aiKey: getVar("AI_API_KEY"),
+    aiModel: getVar("AI_MODEL", "gpt-4o-mini"),
+    aiBaseUrl: getVar("AI_BASE_URL", "https://api.openai.com/v1"),
+    effectiveRules
+  };
+}
+function getPullRequestContext() {
+  const [owner, repo] = (getVar("GITHUB_REPOSITORY") || "").split("/");
+  let pullNumber = Number.parseInt(getVar("PULL_NUMBER", "0"), 10);
+  if (!pullNumber && process.env.GITHUB_EVENT_PATH) {
+    try {
+      const event = JSON.parse(
+        fs3.readFileSync(process.env.GITHUB_EVENT_PATH, "utf8")
+      );
+      pullNumber = event.pull_request?.number || 0;
+    } catch {
+      logger.warn(
+        "\u26A0\uFE0F N\xE3o foi poss\xEDvel ler o n\xFAmero do PR do GITHUB_EVENT_PATH"
+      );
+    }
+  }
+  return { owner, repo, pullNumber };
+}
+function getJiraConfiguration() {
+  return {
+    enabled: getVar("ENABLE_JIRA") === "true",
+    host: getVar("JIRA_HOST"),
+    email: getVar("JIRA_EMAIL"),
+    token: getVar("JIRA_TOKEN"),
+    projectKey: getVar("JIRA_PROJECT")
+  };
+}
+function validateRequiredInputs(config2, context) {
+  if (!config2.githubToken || !config2.aiKey || !context.pullNumber) {
+    logger.error("\u274C Falha na valida\xE7\xE3o de vari\xE1veis obrigat\xF3rias:");
+    if (!config2.githubToken) logger.error("- GITHUB_TOKEN est\xE1 vazio.");
+    if (!config2.aiKey) logger.error("- AI_API_KEY est\xE1 vazio.");
+    if (!context.pullNumber)
+      logger.error(
+        "- PULL_NUMBER n\xE3o foi detectado (garanta que o evento seja um Pull Request)."
+      );
+    throw new Error("Faltam vari\xE1veis obrigat\xF3rias.");
+  }
+}
+async function processFiles(orchestrator, files) {
+  const allFindings = [];
+  logger.info(`\u{1F4DD} Analisando ${files.length} arquivos...`);
+  const analyzeFile = async (file2) => {
+    if (!file2.to || file2.chunks.length === 0) return null;
+    if (isIgnoredFile(file2.to)) {
+      logger.info(`\u23ED\uFE0F Ignorando arquivo: ${file2.to}`);
+      return null;
+    }
+    logger.startGroup(`\u{1F50D} Analisando: ${file2.to}`);
+    try {
+      const validLines = /* @__PURE__ */ new Set();
+      let diffContent = "";
+      file2.chunks.forEach((chunk) => {
+        chunk.changes.forEach((change) => {
+          const lineNum = change.ln || change.ln1 || change.ln2;
+          if (change.type === "add") validLines.add(lineNum);
+          const prefix = getDiffLinePrefix(change.type);
+          diffContent += `${lineNum}: ${prefix}${change.content}
+`;
+        });
+      });
+      const findings = await orchestrator.reviewFile(
+        file2.to,
+        diffContent,
+        Array.from(validLines)
+      );
+      if (findings.length > 0) {
+        logger.info(`\u2705 ${findings.length} achados em ${file2.to}`);
+        return findings;
+      }
+      return [];
+    } catch (error41) {
+      logger.error(`\u274C Erro ao analisar arquivo ${file2.to}:`, error41);
+      return [];
+    } finally {
+      logger.endGroup();
+    }
+  };
+  const BATCH_SIZE = 2;
+  for (let i = 0; i < files.length; i += BATCH_SIZE) {
+    const batch = files.slice(i, i + BATCH_SIZE);
+    if (i > 0) {
+      logger.info("\u23F3 Aguardando respiro para evitar Rate Limit (429)...");
+      await new Promise((res) => setTimeout(res, 1500));
+    }
+    const results = await Promise.all(batch.map(analyzeFile));
+    results.forEach((res) => {
+      if (res) allFindings.push(...res);
+    });
+  }
+  return allFindings;
+}
+async function finalizeReview(ghService, summaryAgent, jiraService, allFindings) {
+  if (allFindings.length > 0) {
+    logger.info("\u{1F4CA} Gerando Resumo Executivo e Veredito Final...");
+    const summary2 = await summaryAgent.summarize(allFindings);
+    await ghService.upsertSummaryComment(summary2);
+    await ghService.submitReview(allFindings);
+    if (jiraService) {
+      const blockingIssues = allFindings.filter(
+        (f) => f.body.includes("BLOCKING")
+      );
+      for (const issue3 of blockingIssues) {
+        logger.info(
+          `\u{1F3AB} Criando ticket JIRA para achado cr\xEDtico em ${issue3.path}...`
+        );
+        await jiraService.createIssue(
+          `AI Review Finding: ${issue3.path} (Line ${issue3.line})`,
+          issue3.body
+        );
+      }
+    }
+  } else {
+    logger.info("\u2728 Nenhum problema encontrado. O c\xF3digo est\xE1 excelente!");
+    await ghService.upsertSummaryComment(
+      "\u2705 **AI Code Review:** O conselho de agentes analisou seu c\xF3digo e n\xE3o encontrou problemas. Bom trabalho!"
+    );
+  }
+}
 async function run() {
   try {
     logger.info("\u{1F680} AI Code Reviewer: Council of Agents - Starting...");
-    const githubToken = getVar("GITHUB_TOKEN");
-    const aiKey = getVar("AI_API_KEY");
-    const aiModel = getVar("AI_MODEL", "gpt-4o-mini");
-    const aiBaseUrl = getVar("AI_BASE_URL", "https://api.openai.com/v1");
-    const customRules = getVar("CUSTOM_RULES");
-    const rulesPath = getVar("RULES_PATH");
-    let effectiveRules = customRules;
-    if (rulesPath) {
-      if (fs3.existsSync(rulesPath)) {
-        logger.info(`\u{1F4D6} Lendo regras customizadas de: ${rulesPath}`);
-        const fileRules = fs3.readFileSync(rulesPath, "utf-8");
-        effectiveRules = effectiveRules ? `${effectiveRules}
-
-${fileRules}` : fileRules;
-      } else {
-        logger.warn(`\u26A0\uFE0F Arquivo de regras n\xE3o encontrado: ${rulesPath}`);
-      }
-    }
-    const [owner, repo] = (getVar("GITHUB_REPOSITORY") || "").split("/");
-    let pullNumber = parseInt(getVar("PULL_NUMBER", "0"), 10);
-    if (!pullNumber && process.env.GITHUB_EVENT_PATH) {
-      try {
-        const event = JSON.parse(
-          fs3.readFileSync(process.env.GITHUB_EVENT_PATH, "utf8")
-        );
-        pullNumber = event.pull_request?.number || 0;
-      } catch {
-        logger.warn(
-          "\u26A0\uFE0F N\xE3o foi poss\xEDvel ler o n\xFAmero do PR do GITHUB_EVENT_PATH"
-        );
-      }
-    }
-    const enableJira = getVar("ENABLE_JIRA") === "true";
-    const jiraConfig = {
-      host: getVar("JIRA_HOST"),
-      email: getVar("JIRA_EMAIL"),
-      token: getVar("JIRA_TOKEN"),
-      projectKey: getVar("JIRA_PROJECT")
-    };
-    if (!githubToken || !aiKey || !pullNumber) {
-      logger.error("\u274C Falha na valida\xE7\xE3o de vari\xE1veis obrigat\xF3rias:");
-      if (!githubToken) logger.error("- GITHUB_TOKEN est\xE1 vazio.");
-      if (!aiKey) logger.error("- AI_API_KEY est\xE1 vazio.");
-      if (!pullNumber)
-        logger.error(
-          "- PULL_NUMBER n\xE3o foi detectado (garanta que o evento seja um Pull Request)."
-        );
-      throw new Error("Faltam vari\xE1veis obrigat\xF3rias.");
-    }
+    const config2 = getConfig();
+    const context = getPullRequestContext();
+    const jiraConfig = getJiraConfiguration();
+    validateRequiredInputs(config2, context);
     const ghService = new GithubService(
-      new Octokit2({ auth: githubToken }),
-      owner,
-      repo,
-      pullNumber
+      new Octokit2({ auth: config2.githubToken }),
+      context.owner,
+      context.repo,
+      context.pullNumber
     );
     await ghService.cleanPreviousReviews();
-    const aiService = new AIService(aiKey, aiBaseUrl, aiModel);
+    const aiService = new AIService(
+      config2.aiKey,
+      config2.aiBaseUrl,
+      config2.aiModel
+    );
     const orchestrator = new AgentOrchestrator(
       aiService,
       ghService,
-      effectiveRules
+      config2.effectiveRules
     );
-    const jiraService = enableJira ? new JiraService(jiraConfig) : null;
+    const jiraService = jiraConfig.enabled ? new JiraService(jiraConfig) : null;
     const summaryAgent = new SummaryAgent(aiService);
     const diffString = await ghService.fetchDiff();
     const files = parseDiff(diffString);
-    const allFindings = [];
-    logger.info(`\u{1F4DD} Analisando ${files.length} arquivos...`);
-    const analyzeFile = async (file2) => {
-      if (!file2.to || file2.chunks.length === 0) return null;
-      if (isIgnoredFile(file2.to)) {
-        logger.info(`\u23ED\uFE0F Ignorando arquivo: ${file2.to}`);
-        return null;
-      }
-      logger.startGroup(`\u{1F50D} Analisando: ${file2.to}`);
-      try {
-        const validLines = /* @__PURE__ */ new Set();
-        let diffContent = "";
-        file2.chunks.forEach((chunk) => {
-          chunk.changes.forEach((change) => {
-            const lineNum = change.ln || change.ln1 || change.ln2;
-            if (change.type === "add") validLines.add(lineNum);
-            diffContent += `${lineNum}: ${change.type === "add" ? "+" : change.type === "del" ? "-" : " "}${change.content}
-`;
-          });
-        });
-        const findings = await orchestrator.reviewFile(
-          file2.to,
-          diffContent,
-          Array.from(validLines)
-        );
-        if (findings.length > 0) {
-          logger.info(`\u2705 ${findings.length} achados em ${file2.to}`);
-          return findings;
-        }
-        return [];
-      } catch (error41) {
-        logger.error(`\u274C Erro ao analisar arquivo ${file2.to}:`, error41);
-        return [];
-      } finally {
-        logger.endGroup();
-      }
-    };
-    const BATCH_SIZE = 2;
-    for (let i = 0; i < files.length; i += BATCH_SIZE) {
-      const batch = files.slice(i, i + BATCH_SIZE);
-      if (i > 0) {
-        logger.info("\u23F3 Aguardando respiro para evitar Rate Limit (429)...");
-        await new Promise((res) => setTimeout(res, 1500));
-      }
-      const results = await Promise.all(batch.map(analyzeFile));
-      results.forEach((res) => {
-        if (res) allFindings.push(...res);
-      });
-    }
-    if (allFindings.length > 0) {
-      logger.info("\u{1F4CA} Gerando Resumo Executivo e Veredito Final...");
-      const summary2 = await summaryAgent.summarize(allFindings);
-      await ghService.upsertSummaryComment(summary2);
-      await ghService.submitReview(allFindings);
-      if (jiraService) {
-        const blockingIssues = allFindings.filter(
-          (f) => f.body.includes("BLOCKING")
-        );
-        for (const issue3 of blockingIssues) {
-          logger.info(
-            `\u{1F3AB} Criando ticket JIRA para achado cr\xEDtico em ${issue3.path}...`
-          );
-          await jiraService.createIssue(
-            `AI Review Finding: ${issue3.path} (Line ${issue3.line})`,
-            issue3.body
-          );
-        }
-      }
-    } else {
-      logger.info("\u2728 Nenhum problema encontrado. O c\xF3digo est\xE1 excelente!");
-      await ghService.upsertSummaryComment(
-        "\u2705 **AI Code Review:** O conselho de agentes analisou seu c\xF3digo e n\xE3o encontrou problemas. Bom trabalho!"
-      );
-    }
+    const allFindings = await processFiles(orchestrator, files);
+    await finalizeReview(ghService, summaryAgent, jiraService, allFindings);
     logger.info("\u{1F3C1} AI Code Review finalizado com sucesso.");
   } catch (error41) {
     logger.error("\u{1F4A5} Erro Fatal na execu\xE7\xE3o:", error41.message || error41);
