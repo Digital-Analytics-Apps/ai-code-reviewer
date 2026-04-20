@@ -106,27 +106,55 @@ export class AgentOrchestrator {
     path: string,
     validLines: Set<number>,
   ): GithubReviewComment[] {
-    const consolidated = new Map<number, Set<string>>();
+    // Mapa de Linha -> Lista de achados (mensagens e sugestões)
+    const consolidated = new Map<number, AgentFinding[]>();
+
     for (const group of groups) {
       for (const finding of group.findings) {
         if (!validLines.has(finding.line)) continue;
-        if (!consolidated.has(finding.line))
-          consolidated.set(finding.line, new Set());
-        consolidated.get(finding.line)!.add(finding.message);
+
+        if (!consolidated.has(finding.line)) {
+          consolidated.set(finding.line, []);
+        }
+
+        // Evita duplicatas de mensagens idênticas na mesma linha
+        const alreadyExists = consolidated
+          .get(finding.line)!
+          .some((f) => f.message === finding.message);
+        if (!alreadyExists) {
+          consolidated.get(finding.line)!.push(finding);
+        }
       }
     }
 
     const finalReviews: GithubReviewComment[] = [];
-    consolidated.forEach((messages, line) => {
-      messages.forEach((msg) => {
-        finalReviews.push({
-          path,
-          line,
-          body: `🤖 **AI Bot:** ${msg}`,
-          side: "RIGHT",
+    consolidated.forEach((findings, line) => {
+      let body = findings
+        .map((f) => `🤖 **AI Bot:** ${f.message}`)
+        .join("\n\n");
+
+      // Agrega sugestões de código se existirem
+      const suggestions = findings
+        .filter((f) => f.suggestion)
+        .map((f) => f.suggestion);
+
+      if (suggestions.length > 0) {
+        body += "\n\n---\n\n💡 **Sugestão de Correção:**\n";
+        suggestions.forEach((s) => {
+          body += `\n${s}\n`;
         });
+        body +=
+          "\n\n> [!TIP]\n> ⚠️ *Esta é uma sugestão gerada por IA. Por favor, valide e teste a solução antes de aplicá-la.*";
+      }
+
+      finalReviews.push({
+        path,
+        line,
+        body,
+        side: "RIGHT",
       });
     });
+
     return finalReviews;
   }
 }

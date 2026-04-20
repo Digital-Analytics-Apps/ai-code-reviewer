@@ -77177,12 +77177,20 @@ var BaseAgent = class {
     const systemPrompt = `
 ${this.getGuidelines()}
 
+# Input Format:
+O c\xF3digo recebido ter\xE1 o formato "linha: [+/-] c\xF3digo". 
+Exemplo: "26: + const x = 1;"
+Voc\xEA deve extrair o n\xFAmero da linha e us\xE1-lo no campo "line".
+
 # Custom Business Rules (Priority):
 ${customRules || "Nenhuma regra customizada fornecida."}
 
 # Instru\xE7\xF5es de Sa\xEDda:
 - Analise apenas o c\xF3digo fornecido no diff.
-- Retorne estritamente um JSON Array neste formato: [{"line": number, "message": string}].
+- Retorne estritamente um JSON Array: [{"line": number, "message": string, "suggestion": string}].
+- No campo "suggestion", forne\xE7a um snippet de c\xF3digo corrigido (se aplic\xE1vel). Use Markdown se necess\xE1rio.
+- O campo "suggestion" \xE9 opcional, use apenas quando uma corre\xE7\xE3o de c\xF3digo for clara.
+- O n\xFAmero da linha DEVE ser id\xEAntico ao n\xFAmero prefixado no c\xF3digo.
 - Se n\xE3o houver problemas, retorne um array vazio [].
     `.trim();
     const userContent = `Arquivo: ${fileName}
@@ -77334,20 +77342,33 @@ ${snippet}
     for (const group of groups2) {
       for (const finding of group.findings) {
         if (!validLines.has(finding.line)) continue;
-        if (!consolidated.has(finding.line))
-          consolidated.set(finding.line, /* @__PURE__ */ new Set());
-        consolidated.get(finding.line).add(finding.message);
+        if (!consolidated.has(finding.line)) {
+          consolidated.set(finding.line, []);
+        }
+        const alreadyExists = consolidated.get(finding.line).some((f) => f.message === finding.message);
+        if (!alreadyExists) {
+          consolidated.get(finding.line).push(finding);
+        }
       }
     }
     const finalReviews = [];
-    consolidated.forEach((messages, line) => {
-      messages.forEach((msg) => {
-        finalReviews.push({
-          path: path3,
-          line,
-          body: `\u{1F916} **AI Bot:** ${msg}`,
-          side: "RIGHT"
+    consolidated.forEach((findings, line) => {
+      let body = findings.map((f) => `\u{1F916} **AI Bot:** ${f.message}`).join("\n\n");
+      const suggestions = findings.filter((f) => f.suggestion).map((f) => f.suggestion);
+      if (suggestions.length > 0) {
+        body += "\n\n---\n\n\u{1F4A1} **Sugest\xE3o de Corre\xE7\xE3o:**\n";
+        suggestions.forEach((s) => {
+          body += `
+${s}
+`;
         });
+        body += "\n\n> [!TIP]\n> \u26A0\uFE0F *Esta \xE9 uma sugest\xE3o gerada por IA. Por favor, valide e teste a solu\xE7\xE3o antes de aplic\xE1-la.*";
+      }
+      finalReviews.push({
+        path: path3,
+        line,
+        body,
+        side: "RIGHT"
       });
     });
     return finalReviews;
@@ -77589,8 +77610,9 @@ ${fileRules}` : fileRules;
         let diffContent = "";
         file2.chunks.forEach((chunk) => {
           chunk.changes.forEach((change) => {
-            if (change.type === "add") validLines.add(change.ln);
-            diffContent += `${change.type === "add" ? "+" : change.type === "del" ? "-" : " "}${change.content}
+            const lineNum = change.ln || change.ln1 || change.ln2;
+            if (change.type === "add") validLines.add(lineNum);
+            diffContent += `${lineNum}: ${change.type === "add" ? "+" : change.type === "del" ? "-" : " "}${change.content}
 `;
           });
         });

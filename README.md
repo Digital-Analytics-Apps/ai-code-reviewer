@@ -96,6 +96,38 @@ O bot agora utiliza uma estratégia de busca híbrida para máxima performance:
 
 ---
 
+## 📜 Guia de Configuração de Regras (ai-rules.md)
+
+Para extrair o máximo de precisão do bot, recomendamos criar um arquivo `.github/ai-rules.md`. A IA performa significativamente melhor quando recebe exemplos de **"Certo vs Errado"** (Few-shot prompting).
+
+### Exemplo de Arquivo de Regras Profissional
+
+```markdown
+# 🏛️ Projeto: AI Control - Diretrizes de Engenharia
+
+## ⚛️ React & Frontend Standards
+- **Named Exports**: Proibido usar `export default`. Use apenas **Named Exports**.
+  - *Bom:* `export const UserCard = () => { ... }`
+  - *Ruim:* `export default function UserCard() { ... }`
+
+- **MUI (Material UI)**: Se o atributo \`sx\` tiver mais de 5 propriedades, extraia para um \`styled component\`.
+  - *Ação:* Sugira a criação do componente usando a função \`styled()\` da biblioteca.
+
+## 🧱 Arquitetura e Clean Code
+- **Early Returns**: Prefira retornar cedo em vez de aninhamentos profundos.
+- **Tipagem**: O uso de \`any\` é estritamente proibido. Use \`unknown\` ou interfaces genéricas.
+
+## 🧪 Testes
+- **Mocks**: Sempre use \`vi.mocked()\` para manter a tipagem de funções mockadas no Vitest/Jest.
+```
+
+Para ativar, basta apontar o caminho no seu workflow:
+\`\`\`yaml
+rules_path: ".github/ai-rules.md"
+\`\`\`
+
+---
+
 ## 🏢 Cenários de Uso e Compliance
 
 ### ☁️ GitHub Cloud

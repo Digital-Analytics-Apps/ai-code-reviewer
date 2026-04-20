@@ -132,8 +132,9 @@ async function run() {
 
         file.chunks.forEach((chunk: any) => {
           chunk.changes.forEach((change: any) => {
-            if (change.type === "add") validLines.add(change.ln);
-            diffContent += `${change.type === "add" ? "+" : change.type === "del" ? "-" : " "}${change.content}\n`;
+            const lineNum = change.ln || change.ln1 || change.ln2;
+            if (change.type === "add") validLines.add(lineNum);
+            diffContent += `${lineNum}: ${change.type === "add" ? "+" : change.type === "del" ? "-" : " "}${change.content}\n`;
           });
         });
 
