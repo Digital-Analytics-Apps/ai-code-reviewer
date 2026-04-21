@@ -6,7 +6,7 @@ import { GithubReviewComment } from "../schemas/review.schema";
  * Agente Executivo responsável por sumarizar a revisão completa do PR.
  */
 export class SummaryAgent {
-  constructor(private aiService: AIService) {}
+  constructor(private readonly aiService: AIService) {}
 
   /**
    * Gera um resumo executivo baseado em todos os comentários feitos.

@@ -12,7 +12,7 @@ import { StringOutputParser } from "@langchain/core/output_parsers";
  * Mantém compatibilidade com qualquer provedor OpenAI-Compatible.
  */
 export class AIService {
-  private model: ChatOpenAI;
+  private readonly model: ChatOpenAI;
 
   constructor(apiKey: string, baseUrl: string, modelName: string) {
     this.model = new ChatOpenAI({
