@@ -23,10 +23,9 @@ Code reviews humanos são caros, lentos e propensos a fadiga. Erros de seguranç
 Um bot de revisão de código que não apenas usa IA para ler texto, mas utiliza um **Conselho de Agentes Especialistas** coordenados para analisar segurança, performance, arquitetura e impactos globais no repositório.
 
 ### O que a ferramenta oferece:
-- **Revisão Multidisciplinar:** Agentes focados em Segurança (OWASP) e Clean Code.
 - **Consciência Global:** Detecta se uma mudança em um arquivo quebra contratos em outros arquivos.
+- **Baixo Ruído (Silence is Gold):** O bot nunca comenta para elogiar. Se o código estiver bom, ele permanece em silêncio, economizando tempo de revisão.
 - **Integração com Jira:** Transforma achados críticos ("BLOCKING") em tickets automaticamente.
-- **Baixo Ruído:** Sistema de triage que decide quais agentes devem rodar, economizando tempo e tokens.
 
 ---
 
@@ -116,6 +115,10 @@ Para apresentar a líderes técnicos, destaque as possibilidades de expansão:
 - **Agente de Testes:** Um agente dedicado a verificar se os testes unitários cobrem a nova lógica.
 - **Agente de Documentação:** Verificar se o README ou Swagger foi atualizado conforme o código mudou.
 - **Fine-tuning:** Treinar modelos com o histórico de PRs aprovados da empresa para aprender o "jeito da casa".
+- **Council of Agents (Multi-Agentes):** 
+    - **Decisão:** Em vez de um prompt gigante "faça tudo", usamos agentes especializados.
+    - **Benefício:** Prompts menores e específicos são mais precisos e sofrem menos de "alucinação". É mais fácil dar exemplos de OWASP para um agente de segurança do que para um generalista.
+    - **Política "Silence is Gold":** Reforçamos nos prompts que o bot **nunca** deve comentar para elogiar ou dizer que o código está correto. Se não houver problemas, o output deve ser um array vazio.
 
 ---
 *Este guia foi gerado para auxiliar na disseminação de boas práticas de engenharia e automação com IA.*

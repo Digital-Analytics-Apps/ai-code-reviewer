@@ -28658,10 +28658,12 @@ ${customRules || "Nenhuma regra customizada fornecida."}
 # Instru\xE7\xF5es de Sa\xEDda:
 - Analise apenas o c\xF3digo fornecido no diff.
 - Retorne estritamente um JSON Array: [{"line": number, "message": string, "suggestion": string}].
+- **PROIBIDO**: Nunca comente para elogiar, dizer que o c\xF3digo est\xE1 bom ou que a abordagem est\xE1 correta. 
+- **REGRA DE OURO**: Se n\xE3o houver problemas, bugs, riscos de seguran\xE7a ou oportunidades claras de melhoria, retorne obrigatoriamente um array vazio [].
 - No campo "suggestion", forne\xE7a um snippet de c\xF3digo corrigido (se aplic\xE1vel). Use Markdown se necess\xE1rio.
 - O campo "suggestion" \xE9 opcional, use apenas quando uma corre\xE7\xE3o de c\xF3digo for clara.
 - O n\xFAmero da linha DEVE ser id\xEAntico ao n\xFAmero prefixado no c\xF3digo.
-- Se n\xE3o houver problemas, retorne um array vazio [].
+- Sil\xEAncio \xE9 ouro: Se o c\xF3digo estiver perfeito, seu output deve ser [].
     `.trim();
     const userContent = `Arquivo: ${fileName}
 Diff:
@@ -28692,9 +28694,10 @@ Voc\xEA \xE9 um Especialista em Seguran\xE7a Cibern\xE9tica focado em identifica
 4.  **Permiss\xF5es**: Critique o uso de permiss\xF5es excessivas (ex: chmod 777 ou sudo desnecess\xE1rio).
 
 # Regras de Resposta:
-- Seja direto e t\xE9cnico.
-- Se n\xE3o houver risco de seguran\xE7a, retorne um array vazio [].
-- Use o prefixo \u{1F534} BLOCKING para falhas graves.
+- Seja direto e estritamente t\xE9cnico.
+- **PROIBIDO**: N\xE3o elogie o c\xF3digo nem diga que ele \xE9 seguro.
+- Se n\xE3o houver risco de seguran\xE7a detectado, seu output deve ser obrigatoriamente um array vazio [].
+- Use o prefixo \u{1F534} BLOCKING apenas para falhas graves que impedem o merge.
 `;
 
 // src/agents/security.agent.ts
@@ -28722,9 +28725,11 @@ Voc\xEA \xE9 um Engenheiro de Software S\xEAnior especializado em Clean Code, Pe
 4.  **Manutenibilidade**: Exija Early Returns e nomes de vari\xE1veis sem\xE2nticos.
 
 # Regras de Resposta:
-- Foque em melhorias estruturais.
-- Se o c\xF3digo estiver bom, retorne um array vazio [].
-- Use o prefixo \u{1F7E1} SUGGESTION para melhorias e \u{1F7E2} NIT para detalhes.
+- Foque exclusivamente em problemas t\xE9cnicos, d\xEDvida t\xE9cnica ou melhorias de clareza.
+- **NUNCA** poste coment\xE1rios elogiosos ou que digam "abordagem correta".
+- Se o c\xF3digo seguir os padr\xF5es e estiver limpo, retorne estritamente um array vazio [].
+- Use o prefixo \u{1F7E1} SUGGESTION para melhorias reais e \u{1F7E2} NIT para pequenos problemas de estilo/manuten\xE7\xE3o.
+- Se n\xE3o houver o que melhorar, n\xE3o comente nada.
 `;
 
 // src/agents/general.agent.ts

@@ -46,7 +46,8 @@ Esta é a fase mais complexa:
 
 ### 1. Council of Agents (Multi-Agentes)
 *   **Decisão:** Em vez de um prompt gigante "faça tudo", usamos agentes especializados.
-*   **Benefício:** Prompts menores e específicos são mais precisos e sofrem menos de "alucinação". É mais fácil dar exemplos de OWASP para um agente de segurança do que para um generalista.
+*   **Benefício:** Prompts menores e específicos são mais precisos e sofrem menos de "alucinação".
+*   **Política "Silence is Gold":** Reforçamos nos prompts que o bot **nunca** deve comentar para elogiar ou dizer que o código está correto. Se não houver problemas, o output deve ser um array vazio. Isso evita ruído e foca apenas no que precisa ser corrigido.
 
 ### 2. Validação via Zod (`src/schemas/review.schema.ts`)
 *   **Decisão:** Forçar o modelo de IA a responder em JSON e validar com Zod.

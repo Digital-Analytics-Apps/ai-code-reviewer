@@ -50,10 +50,12 @@ ${customRules || "Nenhuma regra customizada fornecida."}
 # Instruções de Saída:
 - Analise apenas o código fornecido no diff.
 - Retorne estritamente um JSON Array: [{"line": number, "message": string, "suggestion": string}].
+- **PROIBIDO**: Nunca comente para elogiar, dizer que o código está bom ou que a abordagem está correta. 
+- **REGRA DE OURO**: Se não houver problemas, bugs, riscos de segurança ou oportunidades claras de melhoria, retorne obrigatoriamente um array vazio [].
 - No campo "suggestion", forneça um snippet de código corrigido (se aplicável). Use Markdown se necessário.
 - O campo "suggestion" é opcional, use apenas quando uma correção de código for clara.
 - O número da linha DEVE ser idêntico ao número prefixado no código.
-- Se não houver problemas, retorne um array vazio [].
+- Silêncio é ouro: Se o código estiver perfeito, seu output deve ser [].
     `.trim();
 
     const userContent = `Arquivo: ${fileName}\nDiff:\n${diffContent}`;
