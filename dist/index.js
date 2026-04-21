@@ -77294,7 +77294,9 @@ var GithubService = class {
         event: "COMMENT",
         body: `\u{1F916} **AI Code Review (Part ${i + 1}/${totalBatches})**
 
-Total de achados: ${reviews.length}.`,
+Total de achados: ${reviews.length}.
+
+<!-- AI_BOT_REVIEW_HEADER -->`,
         comments: batch
       });
       if (totalBatches > 1 && i < totalBatches - 1) {
@@ -77411,22 +77413,29 @@ ${this.SUMMARY_FINGERPRINT}`;
         pull_number: this.pullNumber
       });
       const botReviews = reviews.filter(
-        (r) => r.body?.includes("\u{1F916} **AI Code Review")
+        (r) => r.body?.includes("\u{1F916} **AI Code Review") || r.body?.includes("<!-- AI_BOT_REVIEW_HEADER -->")
       );
       for (const review of botReviews) {
         try {
-          await this.octokit.request(
-            "DELETE /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}",
-            {
+          if (review.state === "PENDING") {
+            await this.octokit.rest.pulls.deletePendingReview({
               owner: this.owner,
               repo: this.repo,
               pull_number: this.pullNumber,
               review_id: review.id
-            }
-          );
+            });
+          } else if (review.body && !review.body.includes("substitu\xEDda")) {
+            await this.octokit.rest.pulls.updateReview({
+              owner: this.owner,
+              repo: this.repo,
+              pull_number: this.pullNumber,
+              review_id: review.id,
+              body: "\u{1F5D1}\uFE0F _Esta an\xE1lise foi substitu\xEDda por uma vers\xE3o mais recente._"
+            });
+          }
         } catch (error41) {
           logger.debug(
-            `\u26A0\uFE0F N\xE3o foi poss\xEDvel deletar review ${review.id}:`,
+            `\u26A0\uFE0F N\xE3o foi poss\xEDvel limpar review ${review.id}:`,
             error41
           );
         }

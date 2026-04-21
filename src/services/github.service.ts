@@ -54,7 +54,7 @@ export class GithubService {
         repo: this.repo,
         pull_number: this.pullNumber,
         event: "COMMENT",
-        body: `🤖 **AI Code Review (Part ${i + 1}/${totalBatches})**\n\nTotal de achados: ${reviews.length}.`,
+        body: `🤖 **AI Code Review (Part ${i + 1}/${totalBatches})**\n\nTotal de achados: ${reviews.length}.\n\n<!-- AI_BOT_REVIEW_HEADER -->`,
         comments: batch,
       });
 
@@ -201,24 +201,34 @@ export class GithubService {
         pull_number: this.pullNumber,
       });
 
-      const botReviews = reviews.filter((r) =>
-        r.body?.includes("🤖 **AI Code Review"),
+      const botReviews = reviews.filter(
+        (r) =>
+          r.body?.includes("🤖 **AI Code Review") ||
+          r.body?.includes("<!-- AI_BOT_REVIEW_HEADER -->"),
       );
 
       for (const review of botReviews) {
         try {
-          await this.octokit.request(
-            "DELETE /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}",
-            {
+          if (review.state === "PENDING") {
+            await this.octokit.rest.pulls.deletePendingReview({
               owner: this.owner,
               repo: this.repo,
               pull_number: this.pullNumber,
               review_id: review.id,
-            },
-          );
+            });
+          } else if (review.body && !review.body.includes("substituída")) {
+            // Para revisões já submetidas, atualizamos o corpo para reduzir ruído na timeline
+            await this.octokit.rest.pulls.updateReview({
+              owner: this.owner,
+              repo: this.repo,
+              pull_number: this.pullNumber,
+              review_id: review.id,
+              body: "🗑️ _Esta análise foi substituída por uma versão mais recente._",
+            });
+          }
         } catch (error) {
           logger.debug(
-            `⚠️ Não foi possível deletar review ${review.id}:`,
+            `⚠️ Não foi possível limpar review ${review.id}:`,
             error,
           );
         }
