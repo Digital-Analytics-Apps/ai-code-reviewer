@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { execSync } from "node:child_process";
+import * as fs from "node:fs";
 import { Octokit } from "octokit";
-import { execSync } from "child_process";
-import * as fs from "fs";
 import { GithubReviewComment } from "../schemas/review.schema";
 import { logger } from "../utils/logger";
 
@@ -13,10 +13,10 @@ export class GithubService {
   private readonly SUMMARY_FINGERPRINT = "<!-- AI_CODE_REVIEW_SUMMARY -->";
 
   constructor(
-    private octokit: Octokit,
-    private owner: string,
-    private repo: string,
-    private pullNumber: number,
+    private readonly octokit: Octokit,
+    private readonly owner: string,
+    private readonly repo: string,
+    private readonly pullNumber: number,
   ) {}
 
   /**
@@ -94,7 +94,7 @@ export class GithubService {
             // Formato esperado do grep -n: ./caminho/arquivo:linha:conteúdo
             const parts = line.split(":");
             let filePath = parts[0];
-            const lineNumber = parseInt(parts[1], 10);
+            const lineNumber = Number.parseInt(parts[1], 10);
 
             // Normaliza o caminho removendo o prefixo './' se existir
             if (filePath.startsWith("./")) {
@@ -103,7 +103,7 @@ export class GithubService {
 
             return {
               path: filePath,
-              line: isNaN(lineNumber) ? 1 : lineNumber,
+              line: Number.isNaN(lineNumber) ? 1 : lineNumber,
             };
           });
       } catch (grepError: any) {
@@ -162,13 +162,13 @@ export class GithubService {
   }
 
   /**
-   * Remove comentários de revisão (inline) anteriores do bot para evitar spam.
-   * Filtra por comentários que contenham o prefixo padrão do bot.
+   * Remove comentários de revisão (inline) e revisões anteriores do bot para evitar spam.
    */
   public async cleanPreviousReviews(): Promise<void> {
     try {
-      logger.info("🧹 Limpando comentários de revisão anteriores do bot...");
+      logger.info("🧹 Limpando revisões e comentários anteriores do bot...");
 
+      // 1. Limpa comentários inline
       const { data: comments } =
         await this.octokit.rest.pulls.listReviewComments({
           owner: this.owner,
@@ -176,8 +176,10 @@ export class GithubService {
           pull_number: this.pullNumber,
         });
 
-      const botComments = comments.filter((c) =>
-        c.body.includes("🤖 **AI Bot:**"),
+      const botComments = comments.filter(
+        (c) =>
+          c.body.includes("🤖 **AI Bot:**") ||
+          c.body.includes("🤖 **AI Code Review"),
       );
 
       for (const comment of botComments) {
@@ -188,7 +190,37 @@ export class GithubService {
             comment_id: comment.id,
           });
         } catch {
-          // Ignora se não conseguir deletar um comentário específico
+          // Ignora se já foi deletado (ex: deletado junto com a revisão)
+        }
+      }
+
+      // 2. Limpa os cabeçalhos das revisões (Summaries na timeline)
+      const { data: reviews } = await this.octokit.rest.pulls.listReviews({
+        owner: this.owner,
+        repo: this.repo,
+        pull_number: this.pullNumber,
+      });
+
+      const botReviews = reviews.filter((r) =>
+        r.body?.includes("🤖 **AI Code Review"),
+      );
+
+      for (const review of botReviews) {
+        try {
+          await this.octokit.request(
+            "DELETE /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}",
+            {
+              owner: this.owner,
+              repo: this.repo,
+              pull_number: this.pullNumber,
+              review_id: review.id,
+            },
+          );
+        } catch (error) {
+          logger.debug(
+            `⚠️ Não foi possível deletar review ${review.id}:`,
+            error,
+          );
         }
       }
     } catch (error) {

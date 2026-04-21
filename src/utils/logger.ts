@@ -23,8 +23,15 @@ export const logger = {
       }
     }
   },
-  debug: (message: string) => {
+  debug: (message: string, error?: any) => {
     core.debug(message);
+    if (error) {
+      core.debug(
+        error instanceof Error
+          ? error.stack || error.message
+          : JSON.stringify(error),
+      );
+    }
   },
   startGroup: (name: string) => {
     core.startGroup(name);

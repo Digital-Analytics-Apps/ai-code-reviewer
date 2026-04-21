@@ -28576,8 +28576,13 @@ var logger = {
       }
     }
   },
-  debug: (message) => {
+  debug: (message, error41) => {
     debug(message);
+    if (error41) {
+      debug(
+        error41 instanceof Error ? error41.stack || error41.message : JSON.stringify(error41)
+      );
+    }
   },
   startGroup: (name) => {
     startGroup(name);
@@ -77243,8 +77248,8 @@ var AIService = class {
 };
 
 // src/services/github.service.ts
-var import_child_process = require("child_process");
-var fs2 = __toESM(require("fs"));
+var import_node_child_process = require("node:child_process");
+var fs2 = __toESM(require("node:fs"));
 var GithubService = class {
   constructor(octokit, owner, repo, pullNumber) {
     this.octokit = octokit;
@@ -77313,17 +77318,17 @@ Total de achados: ${reviews.length}.`,
       const excludeDirs = "{.git,node_modules,dist,bin,build,coverage}";
       const command = `grep -rIn "${query}" . --exclude-dir=${excludeDirs}`;
       try {
-        const output = (0, import_child_process.execSync)(command, { encoding: "utf-8" });
+        const output = (0, import_node_child_process.execSync)(command, { encoding: "utf-8" });
         return output.trim().split("\n").filter((line) => line && line.includes(":")).map((line) => {
           const parts = line.split(":");
           let filePath = parts[0];
-          const lineNumber = parseInt(parts[1], 10);
+          const lineNumber = Number.parseInt(parts[1], 10);
           if (filePath.startsWith("./")) {
             filePath = filePath.substring(2);
           }
           return {
             path: filePath,
-            line: isNaN(lineNumber) ? 1 : lineNumber
+            line: Number.isNaN(lineNumber) ? 1 : lineNumber
           };
         });
       } catch (grepError) {
@@ -77377,19 +77382,18 @@ ${this.SUMMARY_FINGERPRINT}`;
     }
   }
   /**
-   * Remove comentários de revisão (inline) anteriores do bot para evitar spam.
-   * Filtra por comentários que contenham o prefixo padrão do bot.
+   * Remove comentários de revisão (inline) e revisões anteriores do bot para evitar spam.
    */
   async cleanPreviousReviews() {
     try {
-      logger.info("\u{1F9F9} Limpando coment\xE1rios de revis\xE3o anteriores do bot...");
+      logger.info("\u{1F9F9} Limpando revis\xF5es e coment\xE1rios anteriores do bot...");
       const { data: comments } = await this.octokit.rest.pulls.listReviewComments({
         owner: this.owner,
         repo: this.repo,
         pull_number: this.pullNumber
       });
       const botComments = comments.filter(
-        (c) => c.body.includes("\u{1F916} **AI Bot:**")
+        (c) => c.body.includes("\u{1F916} **AI Bot:**") || c.body.includes("\u{1F916} **AI Code Review")
       );
       for (const comment of botComments) {
         try {
@@ -77399,6 +77403,32 @@ ${this.SUMMARY_FINGERPRINT}`;
             comment_id: comment.id
           });
         } catch {
+        }
+      }
+      const { data: reviews } = await this.octokit.rest.pulls.listReviews({
+        owner: this.owner,
+        repo: this.repo,
+        pull_number: this.pullNumber
+      });
+      const botReviews = reviews.filter(
+        (r) => r.body?.includes("\u{1F916} **AI Code Review")
+      );
+      for (const review of botReviews) {
+        try {
+          await this.octokit.request(
+            "DELETE /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}",
+            {
+              owner: this.owner,
+              repo: this.repo,
+              pull_number: this.pullNumber,
+              review_id: review.id
+            }
+          );
+        } catch (error41) {
+          logger.debug(
+            `\u26A0\uFE0F N\xE3o foi poss\xEDvel deletar review ${review.id}:`,
+            error41
+          );
         }
       }
     } catch (error41) {
